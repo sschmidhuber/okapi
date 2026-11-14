@@ -437,11 +437,11 @@ void MainWindow::setupConnections() {
     connect(&m_voiceInput, &VoiceInput::transcriptionUpdated, this, [this](const QString &text) {
         m_dictatedText.clear();
         m_composer->finishDictation(text);
-        statusBar()->showMessage(tr("Dictation finished."), 5000);
+        showTransientStatus(tr("Dictation finished."), 5000);
     });
     connect(&m_voiceInput, &VoiceInput::error, this, [this](const QString &message) {
         m_composer->setDictationActive(false);
-        statusBar()->showMessage(tr("Dictation failed: %1").arg(message), 10000);
+        showTransientStatus(tr("Dictation failed: %1").arg(message), 10000);
     });
     connect(&m_sttRegistry, &SttRegistry::changed, this, [this]() { configureVoiceInput(); });
     connect(&m_ttsRegistry, &TtsRegistry::changed, this, [this]() { configureTts(); });
@@ -456,10 +456,10 @@ void MainWindow::setupConnections() {
         } else {
             message = tr("Ready");
         }
-        statusBar()->showMessage(message, timeout);
+        showTransientStatus(message, timeout);
     });
     connect(&m_ttsPlayer, &TtsPlayer::error, this, [this](const QString &message) {
-        statusBar()->showMessage(tr("Text-to-speech failed: %1").arg(message), 10000);
+        showTransientStatus(tr("Text-to-speech failed: %1").arg(message), 10000);
     });
     connect(m_speakButton, &QPushButton::clicked, this, &MainWindow::onSpeakResponsesToggled);
     setupChatViewConnections();
@@ -501,22 +501,20 @@ void MainWindow::setupConnections() {
             &MainWindow::onMcpPermissionRequested);
     connect(&m_mcpManager, &McpManager::serverLog, this,
             [this](const QString &serverName, const QString &level, const QString &message) {
-                statusBar()->showMessage(tr("MCP [%1] %2: %3").arg(serverName, level, message),
-                                         10000);
+                showTransientStatus(tr("MCP [%1] %2: %3").arg(serverName, level, message), 10000);
             });
     connect(&m_mcpManager, &McpManager::serverStateChanged, this,
             [this](const QString &, const QString &serverName, bool connected) {
-                statusBar()->showMessage(
-                    connected ? tr("MCP server \"%1\" connected.").arg(serverName)
-                              : tr("MCP server \"%1\" disconnected.").arg(serverName),
-                    5000);
+                showTransientStatus(connected
+                                        ? tr("MCP server \"%1\" connected.").arg(serverName)
+                                        : tr("MCP server \"%1\" disconnected.").arg(serverName),
+                                    5000);
                 onMcpToolsChanged();
             });
     connect(&m_mcpManager, &McpManager::toolResultReady, this, &MainWindow::onToolResultReady);
     connect(&m_mcpManager, &McpManager::toolCallFailed, this,
             [this](const QString &toolName, const QString &error) {
-                statusBar()->showMessage(tr("MCP tool \"%1\" failed: %2").arg(toolName, error),
-                                         10000);
+                showTransientStatus(tr("MCP tool \"%1\" failed: %2").arg(toolName, error), 10000);
             });
 }
 
@@ -712,7 +710,7 @@ void MainWindow::setupChatViewConnections() {
         if (url.isEmpty())
             statusBar()->clearMessage();
         else
-            statusBar()->showMessage(url);
+            showTransientStatus(url);
     });
     // Clicking a file element in a user message opens the file with the
     // system's default application (non-modal error if that fails).
@@ -1545,8 +1543,7 @@ void MainWindow::onSend(const QString &text, const QVector<ImageAttachment> &ima
         m_pendingMessages.append({.text = text, .images = images, .files = files});
         m_composer->clearText();
         m_composer->clearAttachments();
-        statusBar()->showMessage(tr("Queued — will be sent when the current response finishes."),
-                                 5000);
+        showTransientStatus(tr("Queued — will be sent when the current response finishes."), 5000);
         return;
     }
     if (!m_editingMessageId.isNull()) {
@@ -1905,6 +1902,13 @@ void MainWindow::cancelContext(ChatSession *session) {
     }
 }
 
+void MainWindow::showTransientStatus(const QString &message, int timeoutMs) {
+    const StreamContext *context = contextFor(m_currentSession);
+    if (context && (context->streaming || context->runningTools))
+        return; // busy: keep "Generating…"/"Running MCP tools…"
+    statusBar()->showMessage(message, timeoutMs);
+}
+
 void MainWindow::updateStreamingUi() {
     const StreamContext *context = contextFor(m_currentSession);
     // A context whose turn already finished (streaming == false, no tool
@@ -2028,9 +2032,9 @@ void MainWindow::onToolResultReady(const QString &toolName, const QString &resul
     // requested it; the chat repaints the element without the spinner.
     if (markRunningToolCallResult(toolName, resultText, isError))
         return;
-    statusBar()->showMessage(isError ? tr("MCP tool \"%1\" failed.").arg(toolName)
-                                     : tr("MCP tool \"%1\" finished.").arg(toolName),
-                             5000);
+    showTransientStatus(isError ? tr("MCP tool \"%1\" failed.").arg(toolName)
+                                : tr("MCP tool \"%1\" finished.").arg(toolName),
+                        5000);
 }
 
 void MainWindow::runToolCalls(StreamContext *context, const QUuid &assistantMessageId,

@@ -121,6 +121,9 @@ public:
     // the error), and a late finished() for the same message afterwards.
     void simulateStreamErrorForTest(const QString &error, int httpStatus = 0);
     void simulateLateStreamFinishForTest();
+    void simulateTransientStatusForTest(const QString &message) {
+        showTransientStatus(message, 10000);
+    }
     void sendTextForTest(const QString &text) { onSend(text, {}, {}); }
     void startEditMessageForTest(const QUuid &id) {
         startEditMessage(id.toString(QUuid::WithoutBraces));
@@ -285,6 +288,10 @@ private:
     // Reflects the current chat's turn state in composer, stop button and
     // status bar, and pushes the running/unread badges to the sidebar.
     void updateStreamingUi();
+    // Transient status messages (MCP logs, TTS, hovers, ...) must not
+    // overwrite the busy status ("Generating…"/"Running MCP tools…") while a
+    // turn is in flight — the sidebar spinner is the source of truth there.
+    void showTransientStatus(const QString &message, int timeoutMs = 0);
     // Marks the first running tool call with the given name (across all
     // chats) done/failed; returns whether one was found.
     [[nodiscard]] bool markRunningToolCallResult(const QString &toolName, const QString &resultText,
