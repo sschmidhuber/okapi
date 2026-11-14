@@ -906,7 +906,7 @@ void TestMainWindow::composerFollowsDarkPalette() {
 
 // The composer content is a per-chat draft: typing in one chat and switching
 // to another chat shows that chat's (empty) draft, switching back restores
-// the text, the sidebar badges draft chats with the document-edit icon, and
+// the text, the sidebar badges draft chats with the edit-entry icon, and
 // sending clears the draft.
 void TestMainWindow::composerDraftIsPerChatAndRestoredOnSwitch() {
     MainWindow window;
@@ -943,7 +943,7 @@ void TestMainWindow::composerDraftIsPerChatAndRestoredOnSwitch() {
     window.selectSessionForTest(chatB->id());
     QCOMPARE(composer->text(), QStringLiteral("draft for B"));
 
-    // Both draft chats carry the document-edit badge in the sidebar.
+    // Both draft chats carry the edit-entry badge in the sidebar.
     auto *tree = window.findChild<QTreeWidget *>();
     QVERIFY(tree);
     int badged = 0;

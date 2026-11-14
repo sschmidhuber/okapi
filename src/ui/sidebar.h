@@ -40,7 +40,7 @@ public:
 
     // Per-session state badges: an animated spinner for chats whose model
     // is still working, a dot for chats with messages the user has not
-    // seen yet, a document-edit icon for chats with an unsent composer
+    // seen yet, an edit-entry icon for chats with an unsent composer
     // draft. Priority when several apply: running > unread > draft.
     // Applied on the next (or the current) tree build.
     void setIndicators(const QSet<QUuid> &running, const QSet<QUuid> &unread,

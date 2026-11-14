@@ -240,7 +240,7 @@ void TestSidebar::indicatorsBadgeRunningAndUnreadChats() {
 }
 
 // The draft badge: a chat with an unsent composer draft shows the
-// document-edit icon and an "unsent draft" tooltip; running/unread win over
+// edit-entry icon and an "unsent draft" tooltip; running/unread win over
 // the draft icon when several states apply at once.
 void TestSidebar::indicatorsBadgeDraftChats() {
     const QDateTime now = QDateTime::currentDateTime();

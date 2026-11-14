@@ -255,7 +255,7 @@ private:
     // Per-chat composer drafts: the composer content belongs to the current
     // chat and unsent text is kept as a draft (persisted in the sessions
     // table so it survives restarts; chats with a draft get a
-    // document-edit icon in the sidebar).
+    // edit-entry icon in the sidebar).
     void onComposerTextChanged(const QString &text);
     // Stores the composer text as the current chat's draft and persists it.
     void saveCurrentDraft();
