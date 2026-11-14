@@ -296,7 +296,7 @@ QIcon Sidebar::spinnerIcon() const {
     }));
 }
 
-QIcon Sidebar::draftIcon() const {
+QIcon Sidebar::draftIcon() {
     // Unsaved composer draft: the Breeze "document-edit-symbolic" icon,
     // recolored to the palette text color so it stays visible in dark mode.
     return themedIcon(QStringLiteral(":/resources/icons/document-edit-symbolic.svg"));

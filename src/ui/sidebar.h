@@ -59,7 +59,7 @@ private:
     void requestDeleteSelected();
     [[nodiscard]] QIcon spinnerIcon() const;
     [[nodiscard]] QIcon unreadDotIcon() const;
-    [[nodiscard]] QIcon draftIcon() const;
+    [[nodiscard]] static QIcon draftIcon();
 
     QTreeWidget *m_tree;
     QTimer *m_spinnerTimer = nullptr;
