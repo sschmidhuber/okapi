@@ -48,10 +48,20 @@ foreach(test_name ${OKAPI_TESTS})
 endforeach()
 
 # The sidebar lives in the application target, so its test compiles the
-# source directly and links against Qt Widgets.
-add_executable(tst_sidebar tst_sidebar.cpp ${CMAKE_SOURCE_DIR}/src/ui/sidebar.cpp)
+# source directly and links against Qt Widgets. It uses themedIcon() for the
+# draft badge, so it also compiles theme.cpp, links Qt6::Svg and embeds the
+# edit-entry-symbolic icon like the app does.
+add_executable(tst_sidebar tst_sidebar.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/sidebar.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp)
 target_include_directories(tst_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(tst_sidebar PRIVATE okapi-core Qt6::Test Qt6::Widgets)
+target_link_libraries(tst_sidebar PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::Svg)
+set_source_files_properties(${CMAKE_SOURCE_DIR}/resources/icons/edit-entry-symbolic.svg
+    PROPERTIES QT_RESOURCE_ALIAS "resources/icons/edit-entry-symbolic.svg")
+qt_add_resources(tst_sidebar "tst_sidebar_resources"
+    PREFIX "/"
+    FILES
+        ${CMAKE_SOURCE_DIR}/resources/icons/edit-entry-symbolic.svg)
 add_test(NAME tst_sidebar COMMAND tst_sidebar)
 
 # The chat view (and its delegate) also live in the application target; the
@@ -112,6 +122,14 @@ add_executable(tst_mainwindow tst_mainwindow.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp)
 target_include_directories(tst_mainwindow PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_mainwindow PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::WebEngineWidgets Qt6::WebChannel Qt6::Svg)
+# The sidebar's draft badge uses the bundled edit-entry-symbolic icon;
+# embed it so the icon is not null in the test binary.
+set_source_files_properties(${CMAKE_SOURCE_DIR}/resources/icons/edit-entry-symbolic.svg
+    PROPERTIES QT_RESOURCE_ALIAS "resources/icons/edit-entry-symbolic.svg")
+qt_add_resources(tst_mainwindow "tst_mainwindow_resources"
+    PREFIX "/"
+    FILES
+        ${CMAKE_SOURCE_DIR}/resources/icons/edit-entry-symbolic.svg)
 add_test(NAME tst_mainwindow COMMAND tst_mainwindow)
 
 # The settings dialog shows themed icons with bundled SVGs from the app's

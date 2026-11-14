@@ -2,6 +2,7 @@
 
 #include "core/chatsession.h"
 #include <QDateTime>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -28,6 +29,10 @@ private slots:
     void failMessagePersistsError();
     void deleteSessionRemovesMessages();
     void updateSessionChangesMetadata();
+    void sessionDraftRoundTrip();
+    void setSessionDraftUpdatesDraftOnly();
+    void updateSessionPersistsDraft();
+    void migratesLegacySchemaWithoutDraft();
     void backendRoundTrip();
     void backendUpdateOverwritesEntry();
     void backendDeleteRemovesEntry();
@@ -234,6 +239,75 @@ void TestChatDatabase::updateSessionChangesMetadata() {
     const auto id = session.id().toString(QUuid::WithoutBraces);
     QCOMPARE(db().sessionTitle(id), QStringLiteral("New title"));
     QCOMPARE(db().sessionModel(id), QStringLiteral("mistral"));
+}
+
+void TestChatDatabase::sessionDraftRoundTrip() {
+    ChatSession session(QStringLiteral("Draft chat"), QStringLiteral("backend-1"));
+    session.setDraft(QStringLiteral("unsent text\nwith newline"));
+    QVERIFY(db().insertSession(session));
+    const auto loaded = db().loadSessions();
+    QCOMPARE(loaded.size(), 1);
+    QCOMPARE(loaded.first().draft, QStringLiteral("unsent text\nwith newline"));
+}
+
+void TestChatDatabase::setSessionDraftUpdatesDraftOnly() {
+    ChatSession session(QStringLiteral("Chat"), QStringLiteral("backend-1"));
+    session.setModel(QStringLiteral("llama3"));
+    QVERIFY(db().insertSession(session));
+    const auto id = session.id().toString(QUuid::WithoutBraces);
+    QVERIFY(db().setSessionDraft(id, QStringLiteral("draft v1")));
+    auto loaded = db().loadSessions();
+    QCOMPARE(loaded.first().draft, QStringLiteral("draft v1"));
+    // The other columns are untouched.
+    QCOMPARE(db().sessionTitle(id), QStringLiteral("Chat"));
+    QCOMPARE(db().sessionModel(id), QStringLiteral("llama3"));
+    QVERIFY(db().setSessionDraft(id, QString()));
+    loaded = db().loadSessions();
+    QCOMPARE(loaded.first().draft, QString());
+}
+
+void TestChatDatabase::updateSessionPersistsDraft() {
+    ChatSession session(QStringLiteral("Chat"), QStringLiteral("backend-1"));
+    QVERIFY(db().insertSession(session));
+    session.setDraft(QStringLiteral("typed but not sent"));
+    QVERIFY(db().updateSession(session));
+    const auto loaded = db().loadSessions();
+    QCOMPARE(loaded.size(), 1);
+    QCOMPARE(loaded.first().draft, QStringLiteral("typed but not sent"));
+}
+
+void TestChatDatabase::migratesLegacySchemaWithoutDraft() {
+    db().close();
+    // Build a database with the pre-draft sessions schema.
+    const QString legacyPath = m_tempDir.filePath(QStringLiteral("legacy-sessions.sqlite"));
+    {
+        QSqlDatabase raw =
+            QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("legacy-sessions"));
+        raw.setDatabaseName(legacyPath);
+        QVERIFY(raw.open());
+        {
+            QSqlQuery q(raw);
+            QVERIFY(q.exec(QStringLiteral(
+                "CREATE TABLE sessions ("
+                "id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, backend_id TEXT NOT NULL, "
+                "model TEXT, created_at INTEGER NOT NULL, "
+                "last_activity_at INTEGER NOT NULL DEFAULT 0)")));
+            QVERIFY(q.exec(
+                QStringLiteral("INSERT INTO sessions (id, title, backend_id, model, created_at) "
+                               "VALUES ('legacy-1', 'legacy chat', 'backend-1', 'm', 1000)")));
+        }
+        raw.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("legacy-sessions"));
+    }
+    // Opening through ChatDatabase runs the migration.
+    QVERIFY2(db().open(legacyPath), db().lastError().toUtf8().constData());
+    const auto loaded = db().loadSessions();
+    QCOMPARE(loaded.size(), 1);
+    QCOMPARE(loaded.first().title, QStringLiteral("legacy chat"));
+    QCOMPARE(loaded.first().draft, QString());
+    // Writes after the migration persist the draft.
+    QVERIFY(db().setSessionDraft(QStringLiteral("legacy-1"), QStringLiteral("hello")));
+    QCOMPARE(db().loadSessions().first().draft, QStringLiteral("hello"));
 }
 
 void TestChatDatabase::backendRoundTrip() {

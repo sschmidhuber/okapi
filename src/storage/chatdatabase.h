@@ -25,6 +25,8 @@ struct StoredSession {
     QString model;
     QDateTime createdAt;
     QDateTime lastActivityAt;
+    // Unsaved composer text of the chat (persisted so it survives restarts).
+    QString draft;
 };
 
 struct StoredMessage {
@@ -89,6 +91,9 @@ public:
     [[nodiscard]] QVector<StoredSession> loadSessions() const;
     bool insertSession(const ChatSession &session);
     bool updateSession(const ChatSession &session);
+    // Persists only the unsent composer draft of a session (lightweight
+    // update for the debounced composer-text writes).
+    bool setSessionDraft(const QString &sessionId, const QString &draft);
     bool deleteSession(const QString &sessionId);
     // Deletes the given messages of a session (attachments first); used when
     // a user message is edited and the tail of the history is resent.

@@ -267,7 +267,10 @@ Composer::Composer(QWidget *parent) : QWidget(parent) {
             emit dictationRequested();
     });
     // Live filter while the prompt-template menu is open.
-    connect(m_textEdit, &QPlainTextEdit::textChanged, this, [this]() { onTextChanged(); });
+    connect(m_textEdit, &QPlainTextEdit::textChanged, this, [this]() {
+        onTextChanged();
+        emit textChanged(m_textEdit->toPlainText());
+    });
 }
 
 void Composer::refreshTheme() {

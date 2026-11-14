@@ -54,7 +54,20 @@ void createTables(QSqlDatabase &database) {
                               "backend_id TEXT NOT NULL, "
                               "model TEXT, "
                               "created_at INTEGER NOT NULL, "
-                              "last_activity_at INTEGER NOT NULL DEFAULT 0)"));
+                              "last_activity_at INTEGER NOT NULL DEFAULT 0, "
+                              "draft TEXT NOT NULL DEFAULT '')"));
+    // Migration for databases created before the draft column existed.
+    QSqlQuery sessionColumns(database);
+    if (sessionColumns.exec(QStringLiteral("PRAGMA table_info(sessions)"))) {
+        bool hasDraft = false;
+        while (sessionColumns.next()) {
+            if (sessionColumns.value(1).toString() == QLatin1String("draft"))
+                hasDraft = true;
+        }
+        if (!hasDraft)
+            sessionColumns.exec(QStringLiteral("ALTER TABLE sessions ADD COLUMN draft TEXT NOT "
+                                               "NULL DEFAULT ''"));
+    }
     query.exec(
         QStringLiteral("CREATE TABLE IF NOT EXISTS messages ("
                        "id TEXT PRIMARY KEY NOT NULL, "
@@ -350,7 +363,7 @@ QVector<StoredSession> ChatDatabase::loadSessions() const {
     QVector<StoredSession> result;
     QSqlQuery query(m_database);
     if (!query.exec(QStringLiteral("SELECT id, title, backend_id, model, created_at, "
-                                   "last_activity_at FROM sessions "
+                                   "last_activity_at, draft FROM sessions "
                                    "ORDER BY last_activity_at DESC, created_at DESC"))) {
         m_lastError = query.lastError().text();
         return result;
@@ -365,6 +378,7 @@ QVector<StoredSession> ChatDatabase::loadSessions() const {
         const qint64 lastActivity = query.value(5).toLongLong();
         session.lastActivityAt =
             lastActivity > 0 ? QDateTime::fromSecsSinceEpoch(lastActivity) : session.createdAt;
+        session.draft = query.value(6).toString();
         result.push_back(std::move(session));
     }
     return result;
@@ -377,25 +391,28 @@ bool ChatDatabase::insertSession(const ChatSession &session) {
     const qint64 lastActivity = session.lastActivityAt().isValid()
                                     ? session.lastActivityAt().toSecsSinceEpoch()
                                     : createdAt;
-    return execute(QStringLiteral("INSERT INTO sessions (id, title, backend_id, model, "
-                                  "created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?) "
-                                  "ON CONFLICT (id) DO UPDATE SET title = excluded.title, "
-                                  "backend_id = excluded.backend_id, model = excluded.model, "
-                                  "created_at = excluded.created_at, "
-                                  "last_activity_at = excluded.last_activity_at"),
-                   {
-                       session.id().toString(QUuid::WithoutBraces),
-                       session.title(),
-                       session.backendId(),
-                       session.model(),
-                       createdAt,
-                       lastActivity,
-                   });
+    return execute(
+        QStringLiteral("INSERT INTO sessions (id, title, backend_id, model, "
+                       "created_at, last_activity_at, draft) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                       "ON CONFLICT (id) DO UPDATE SET title = excluded.title, "
+                       "backend_id = excluded.backend_id, model = excluded.model, "
+                       "created_at = excluded.created_at, "
+                       "last_activity_at = excluded.last_activity_at, "
+                       "draft = excluded.draft"),
+        {
+            session.id().toString(QUuid::WithoutBraces),
+            session.title(),
+            session.backendId(),
+            session.model(),
+            createdAt,
+            lastActivity,
+            session.draft(),
+        });
 }
 
 bool ChatDatabase::updateSession(const ChatSession &session) {
     return execute(QStringLiteral("UPDATE sessions SET title = ?, backend_id = ?, model = ?, "
-                                  "last_activity_at = ? WHERE id = ?"),
+                                  "last_activity_at = ?, draft = ? WHERE id = ?"),
                    {
                        session.title(),
                        session.backendId(),
@@ -403,8 +420,15 @@ bool ChatDatabase::updateSession(const ChatSession &session) {
                        session.lastActivityAt().isValid()
                            ? session.lastActivityAt().toSecsSinceEpoch()
                            : QDateTime::currentDateTime().toSecsSinceEpoch(),
+                       session.draft(),
                        session.id().toString(QUuid::WithoutBraces),
                    });
+}
+
+bool ChatDatabase::setSessionDraft(const QString &sessionId, const QString &draft) {
+    // A null QString would bind as SQL NULL and violate NOT NULL.
+    return execute(QStringLiteral("UPDATE sessions SET draft = ? WHERE id = ?"),
+                   {draft.isNull() ? QStringLiteral("") : draft, sessionId});
 }
 
 bool ChatDatabase::deleteSession(const QString &sessionId) {

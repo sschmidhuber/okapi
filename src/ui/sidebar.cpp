@@ -1,6 +1,7 @@
 #include "ui/sidebar.h"
 #include "core/chatsession.h"
 #include "core/sessiongrouper.h"
+#include "ui/theme.h"
 
 #include <QApplication>
 #include <QHeaderView>
@@ -231,9 +232,11 @@ void Sidebar::requestDeleteSelected() {
         emit sessionDeleteRequested(deletable);
 }
 
-void Sidebar::setIndicators(const QSet<QUuid> &running, const QSet<QUuid> &unread) {
+void Sidebar::setIndicators(const QSet<QUuid> &running, const QSet<QUuid> &unread,
+                            const QSet<QUuid> &drafts) {
     m_running = running;
     m_unread = unread;
+    m_drafts = drafts;
     if (!m_running.isEmpty())
         m_spinnerTimer->start();
     else
@@ -257,6 +260,11 @@ void Sidebar::applyIndicators() {
                 if (icon.isNull())
                     icon = unreadDotIcon();
                 state << tr("unread messages");
+            }
+            if (m_drafts.contains(id)) {
+                if (icon.isNull())
+                    icon = draftIcon();
+                state << tr("unsent draft");
             }
             item->setIcon(0, icon);
             item->setToolTip(0, state.isEmpty() ? item->text(0)
@@ -286,6 +294,12 @@ QIcon Sidebar::spinnerIcon() const {
             rect.width() * 0.14, rect.height() * 0.14, rect.width() * 0.14, rect.height() * 0.14));
         painter.drawArc(circle, -angle * 16, 300 * 16);
     }));
+}
+
+QIcon Sidebar::draftIcon() {
+    // Unsaved composer draft: the Breeze "edit-entry-symbolic" icon,
+    // recolored to the palette text color so it stays visible in dark mode.
+    return themedIcon(QStringLiteral(":/resources/icons/edit-entry-symbolic.svg"));
 }
 
 QIcon Sidebar::unreadDotIcon() const {
