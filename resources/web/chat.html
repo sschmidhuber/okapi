@@ -974,14 +974,21 @@
         if (programmaticScroll && Math.abs(window.scrollY - programmaticTarget) < 2) {
           programmaticScroll = false;
         } else {
-          // The user scrolled: stop following the content immediately.
-          autoScroll = false;
+          // The user scrolled: stop following the content immediately — but
+          // when the scroll reaches the very bottom (e.g. while an answer is
+          // still streaming), auto-follow re-engages and keeps tracking the
+          // end; scrolling up again disengages it right away.
+          var below = document.body.scrollHeight - window.scrollY - window.innerHeight;
+          autoScroll = below <= 2;
         }
         updateJumpButton();
         if (window.scrollY < 40 && window.qtBridge) window.qtBridge.notifyScrolledToTop();
       });
       window.addEventListener('wheel', function () {
-        autoScroll = false;
+        // Same rule as the scroll handler: wheeling while already at the
+        // bottom keeps/re-engages auto-follow; wheeling up disengages it.
+        var below = document.body.scrollHeight - window.scrollY - window.innerHeight;
+        autoScroll = below <= 2;
         updateJumpButton();
       });
       window.addEventListener('resize', updateJumpButton);
