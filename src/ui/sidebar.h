@@ -40,8 +40,11 @@ public:
 
     // Per-session state badges: an animated spinner for chats whose model
     // is still working, a dot for chats with messages the user has not
-    // seen yet. Applied on the next (or the current) tree build.
-    void setIndicators(const QSet<QUuid> &running, const QSet<QUuid> &unread);
+    // seen yet, a document-edit icon for chats with an unsent composer
+    // draft. Priority when several apply: running > unread > draft.
+    // Applied on the next (or the current) tree build.
+    void setIndicators(const QSet<QUuid> &running, const QSet<QUuid> &unread,
+                       const QSet<QUuid> &drafts);
 
 signals:
     void sessionSelected(const QUuid &id);
@@ -56,12 +59,14 @@ private:
     void requestDeleteSelected();
     [[nodiscard]] QIcon spinnerIcon() const;
     [[nodiscard]] QIcon unreadDotIcon() const;
+    [[nodiscard]] QIcon draftIcon() const;
 
     QTreeWidget *m_tree;
     QTimer *m_spinnerTimer = nullptr;
     int m_spinnerAngle = 0;
     QSet<QUuid> m_running;
     QSet<QUuid> m_unread;
+    QSet<QUuid> m_drafts;
 };
 
 } // namespace okapi

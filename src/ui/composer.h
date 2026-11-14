@@ -116,6 +116,9 @@ public:
 signals:
     void sendRequested(const QString &text, const QVector<okapi::ImageAttachment> &images,
                        const QVector<okapi::FileAttachment> &files);
+    // Fires on every edit of the input (also programmatic setText/clearText),
+    // so the owner can track the per-chat unsent draft.
+    void textChanged(const QString &text);
     void attachmentsChanged();
     void dictationRequested();
     // The prompt-template trigger was typed (menu opens).

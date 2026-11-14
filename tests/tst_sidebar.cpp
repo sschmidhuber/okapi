@@ -44,6 +44,7 @@ private slots:
     void emptySessionsClearTree();
     void sidebarHasNoToolbarButtons();
     void indicatorsBadgeRunningAndUnreadChats();
+    void indicatorsBadgeDraftChats();
     void multiSelectionViaCtrlAndShiftClick();
     void selectedGroupExpandsToItsChats();
     void deletableSelectionExcludesRunningAndUnread();
@@ -186,7 +187,7 @@ void TestSidebar::indicatorsBadgeRunningAndUnreadChats() {
     QVERIFY(tree);
     sidebar.setSessions(sessions);
 
-    sidebar.setIndicators({running->id()}, {unread->id()});
+    sidebar.setIndicators({running->id()}, {unread->id()}, {});
 
     auto *group = groupItem(tree, now);
     QVERIFY(group);
@@ -231,7 +232,59 @@ void TestSidebar::indicatorsBadgeRunningAndUnreadChats() {
     QVERIFY(unreadKept);
 
     // Clearing the indicators removes the badges again.
-    sidebar.setIndicators({}, {});
+    sidebar.setIndicators({}, {}, {});
+    group = groupItem(tree, now);
+    QVERIFY(group);
+    for (int i = 0; i < group->childCount(); ++i)
+        QVERIFY(group->child(i)->icon(0).isNull());
+}
+
+// The draft badge: a chat with an unsent composer draft shows the
+// document-edit icon and an "unsent draft" tooltip; running/unread win over
+// the draft icon when several states apply at once.
+void TestSidebar::indicatorsBadgeDraftChats() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto draft = makeSession(QStringLiteral("draft chat"), now);
+    auto runningDraft = makeSession(QStringLiteral("running draft chat"), now);
+    auto plain = makeSession(QStringLiteral("plain chat"), now);
+    const QVector<ChatSession *> sessions{draft.get(), runningDraft.get(), plain.get()};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+
+    sidebar.setIndicators({runningDraft->id()}, {}, {draft->id(), runningDraft->id()});
+
+    auto *group = groupItem(tree, now);
+    QVERIFY(group);
+    QCOMPARE(group->childCount(), 3);
+    bool sawDraft = false;
+    bool sawRunningDraft = false;
+    bool sawPlain = false;
+    for (int i = 0; i < group->childCount(); ++i) {
+        auto *item = group->child(i);
+        const QUuid id(item->data(0, Qt::UserRole).toString());
+        if (id == draft->id()) {
+            QVERIFY(!item->icon(0).isNull());
+            QVERIFY(item->toolTip(0).contains(QStringLiteral("unsent draft")));
+            sawDraft = true;
+        } else if (id == runningDraft->id()) {
+            // Running has priority over the draft badge.
+            QVERIFY(!item->icon(0).isNull());
+            QVERIFY(item->toolTip(0).contains(QStringLiteral("generating")));
+            QVERIFY(item->toolTip(0).contains(QStringLiteral("unsent draft")));
+            sawRunningDraft = true;
+        } else {
+            QVERIFY(item->icon(0).isNull());
+            QCOMPARE(item->toolTip(0), item->text(0));
+            sawPlain = true;
+        }
+    }
+    QVERIFY(sawDraft && sawRunningDraft && sawPlain);
+
+    // Clearing the draft set removes the badge again.
+    sidebar.setIndicators({}, {}, {});
     group = groupItem(tree, now);
     QVERIFY(group);
     for (int i = 0; i < group->childCount(); ++i)
@@ -320,7 +373,7 @@ void TestSidebar::deletableSelectionExcludesRunningAndUnread() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions(sessions);
-    sidebar.setIndicators({running->id()}, {unread->id()});
+    sidebar.setIndicators({running->id()}, {unread->id()}, {});
 
     tree->selectAll();
     QCOMPARE(sidebar.selectedSessionIds().size(), 3);
@@ -355,7 +408,7 @@ void TestSidebar::deleteKeyEmitsDeletableSelection() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions(sessions);
-    sidebar.setIndicators({running->id()}, {});
+    sidebar.setIndicators({running->id()}, {}, {});
 
     tree->selectAll();
     tree->setFocus();

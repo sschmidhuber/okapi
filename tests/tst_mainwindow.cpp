@@ -93,6 +93,8 @@ private slots:
     void promptMenuArrowKeysNavigateVisibleEntries();
     void startupShowsNewChatAndLoadsOldChatsOnDemand();
     void recentChatsArePrefetchedInBackground();
+    void composerDraftIsPerChatAndRestoredOnSwitch();
+    void composerDraftSurvivesRestart();
 
 private:
     QTemporaryDir m_home;
@@ -900,6 +902,98 @@ void TestMainWindow::composerFollowsDarkPalette() {
     composer.refreshTheme();
     QVERIFY(edit->palette().color(QPalette::Base).lightness() >= 128);
     qApp->setPalette(original);
+}
+
+// The composer content is a per-chat draft: typing in one chat and switching
+// to another chat shows that chat's (empty) draft, switching back restores
+// the text, the sidebar badges draft chats with the document-edit icon, and
+// sending clears the draft.
+void TestMainWindow::composerDraftIsPerChatAndRestoredOnSwitch() {
+    MainWindow window;
+    window.show();
+    auto &registry = window.registryForTest();
+    auto &ollama = registry.add(QStringLiteral("Ollama"), BackendKind::Ollama);
+    registry.save();
+    window.startNewChat();
+    ChatSession *chatA = window.currentSession();
+    QVERIFY(chatA);
+    chatA->setBackendId(ollama.id.toString());
+    chatA->setModel(QStringLiteral("mock-model"));
+    auto *composer = window.findChild<Composer *>();
+    QVERIFY(composer);
+
+    // Type an unsent draft in chat A.
+    composer->setText(QStringLiteral("draft for A"));
+    QCOMPARE(chatA->draft(), QStringLiteral("draft for A"));
+
+    // A new chat starts with an empty composer; chat A keeps its draft.
+    window.startNewChat();
+    ChatSession *chatB = window.currentSession();
+    QVERIFY(chatB);
+    QVERIFY(chatB != chatA);
+    QCOMPARE(composer->text(), QString());
+    QCOMPARE(chatA->draft(), QStringLiteral("draft for A"));
+
+    composer->setText(QStringLiteral("draft for B"));
+    QCOMPARE(chatB->draft(), QStringLiteral("draft for B"));
+
+    // Switching back and forth restores each chat's own draft.
+    window.selectSessionForTest(chatA->id());
+    QCOMPARE(composer->text(), QStringLiteral("draft for A"));
+    window.selectSessionForTest(chatB->id());
+    QCOMPARE(composer->text(), QStringLiteral("draft for B"));
+
+    // Both draft chats carry the document-edit badge in the sidebar.
+    auto *tree = window.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    int badged = 0;
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+        auto *group = tree->topLevelItem(i);
+        for (int j = 0; j < group->childCount(); ++j) {
+            auto *item = group->child(j);
+            const QUuid id(item->data(0, Qt::UserRole).toString());
+            if (id == chatA->id() || id == chatB->id()) {
+                QVERIFY(!item->icon(0).isNull());
+                QVERIFY(item->toolTip(0).contains(QStringLiteral("unsent draft")));
+                ++badged;
+            }
+        }
+    }
+    QCOMPARE(badged, 2);
+
+    // Sending the text clears the draft and the composer.
+    window.sendTextForTest(QStringLiteral("draft for B"));
+    QCOMPARE(composer->text(), QString());
+    QCOMPARE(chatB->draft(), QString());
+}
+
+// An unsent draft survives an app restart: the draft is persisted with the
+// chat and restored into the composer when the chat is selected again.
+void TestMainWindow::composerDraftSurvivesRestart() {
+    QUuid chatId;
+    {
+        MainWindow window;
+        window.show();
+        window.startNewChat();
+        ChatSession *chat = window.currentSession();
+        QVERIFY(chat);
+        chatId = chat->id();
+        auto *composer = window.findChild<Composer *>();
+        QVERIFY(composer);
+        composer->setText(QStringLiteral("remember me"));
+        // Let the debounced draft write hit the database; the destructor
+        // saves it as well.
+        QTest::qWait(600);
+    }
+    MainWindow restarted;
+    restarted.show();
+    ChatSession *restored = restarted.sessionForTest(chatId);
+    QVERIFY(restored);
+    QCOMPARE(restored->draft(), QStringLiteral("remember me"));
+    restarted.selectSessionForTest(chatId);
+    auto *composer = restarted.findChild<Composer *>();
+    QVERIFY(composer);
+    QCOMPARE(composer->text(), QStringLiteral("remember me"));
 }
 
 #include "tst_mainwindow.moc"

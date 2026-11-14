@@ -417,6 +417,13 @@ void MainWindow::setupConnections() {
     connect(m_composer, &Composer::sendRequested, this,
             [this](const QString &text, const QVector<ImageAttachment> &images,
                    const QVector<FileAttachment> &files) { onSend(text, images, files); });
+    // The composer content is a per-chat draft: track edits (debounced write
+    // to the database) so unsent text survives chat switches and restarts.
+    connect(m_composer, &Composer::textChanged, this, &MainWindow::onComposerTextChanged);
+    m_draftSaveTimer = new QTimer(this);
+    m_draftSaveTimer->setSingleShot(true);
+    m_draftSaveTimer->setInterval(500);
+    connect(m_draftSaveTimer, &QTimer::timeout, this, &MainWindow::persistCurrentDraft);
     connect(m_composer, &Composer::dictationRequested, this, [this]() {
         if (m_voiceInput.isActive())
             m_voiceInput.stop();
@@ -519,6 +526,8 @@ void MainWindow::setupConnections() {
 }
 
 MainWindow::~MainWindow() {
+    // Keep the current chat's unsent composer text as a draft.
+    saveCurrentDraft();
     qDeleteAll(m_sessions);
 }
 
@@ -585,6 +594,9 @@ void MainWindow::createSession(const QString &backendId, const QString &model) {
 void MainWindow::onSessionSelected(const QUuid &id) {
     if (!m_editingMessageId.isNull())
         cancelEditMessage();
+    // The composer text belongs to the previously shown chat: keep it as its
+    // unsent draft before switching.
+    saveCurrentDraft();
     // Switching chats never interrupts a running turn: the context of the
     // previous chat keeps streaming in the background.
     m_currentSession = nullptr;
@@ -601,6 +613,8 @@ void MainWindow::onSessionSelected(const QUuid &id) {
         loadInitialMessages(m_currentSession);
     m_chatView->setSession(m_currentSession);
     m_sidebar->selectSession(id);
+    // The composer now shows the newly selected chat's unsent draft.
+    loadDraftIntoComposer();
 
     // The user is looking at this chat now: its unread badge clears.
     if (m_currentSession && m_unreadSessions.remove(id))
@@ -1092,6 +1106,7 @@ bool MainWindow::openDatabase() {
         session->setModel(stored.model);
         session->setCreatedAt(stored.createdAt);
         session->setLastActivityAt(stored.lastActivityAt);
+        session->setDraft(stored.draft);
         session->setProperty("okapi_loadedCount", 0);
         session->setProperty("okapi_messagesLoaded", false);
         session->setProperty("okapi_persisted", true);
@@ -1648,9 +1663,72 @@ void MainWindow::startEditMessage(const QString &idString) {
 
 void MainWindow::cancelEditMessage() {
     m_editingMessageId = QUuid();
-    m_composer->clearText();
-    m_composer->clearAttachments();
     m_cancelEditButton->setVisible(false);
+    // Restore the chat's unsent draft: starting an edit had loaded the
+    // message text into the composer instead. Attachments are not part of
+    // the draft.
+    loadDraftIntoComposer();
+    m_composer->clearAttachments();
+}
+
+void MainWindow::onComposerTextChanged(const QString &text) {
+    // While a draft is being loaded into the composer (chat switch) or a
+    // message is being edited, the composer content is not the chat's draft.
+    if (m_loadingDraft || !m_currentSession || !m_editingMessageId.isNull())
+        return;
+    m_currentSession->setDraft(text);
+    m_draftSaveTimer->start();
+    m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions, draftSessionIds());
+}
+
+void MainWindow::saveCurrentDraft() {
+    if (!m_currentSession)
+        return;
+    m_draftSaveTimer->stop();
+    m_currentSession->setDraft(m_composer->text());
+    persistCurrentDraft();
+    m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions, draftSessionIds());
+}
+
+void MainWindow::loadDraftIntoComposer() {
+    m_loadingDraft = true;
+    m_composer->setText(m_currentSession ? m_currentSession->draft() : QString());
+    m_loadingDraft = false;
+}
+
+void MainWindow::persistCurrentDraft() {
+    if (!m_currentSession || !m_database.isOpen())
+        return;
+    const QString id = m_currentSession->id().toString(QUuid::WithoutBraces);
+    const QString draft = m_currentSession->draft();
+    if (!m_currentSession->property("okapi_persisted").toBool()) {
+        if (draft.isEmpty())
+            return;
+        // A draft in a not-yet-persisted chat must survive a restart too, so
+        // the session row is persisted as soon as it has draft content.
+        persistSession(m_currentSession);
+        m_currentSession->setProperty("okapi_persisted", true);
+        m_currentSession->setProperty("okapi_draftPersisted", true);
+    }
+    if (draft.isEmpty() && m_currentSession->messages().isEmpty() &&
+        m_currentSession->property("okapi_draftPersisted").toBool()) {
+        // The draft was removed again before any message was sent: drop the
+        // row so an abandoned new chat does not linger in the history.
+        m_database.deleteSession(id);
+        m_currentSession->setProperty("okapi_persisted", false);
+        m_currentSession->setProperty("okapi_draftPersisted", false);
+        return;
+    }
+    m_database.setSessionDraft(id, draft);
+}
+
+QSet<QUuid> MainWindow::draftSessionIds() const {
+    QSet<QUuid> drafts;
+    for (const auto *session : m_sessions) {
+        if (!session->draft().isEmpty())
+            drafts.insert(session->id());
+    }
+    return drafts;
 }
 
 void MainWindow::onStop() {
@@ -1940,7 +2018,7 @@ void MainWindow::updateStreamingUi() {
     if (busy)
         setStatusBase(context->runningTools ? tr("Running MCP tools\u2026")
                                             : tr("Generating\u2026"));
-    m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions);
+    m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions, draftSessionIds());
     updateEmptyState();
 }
 
@@ -1950,7 +2028,7 @@ void MainWindow::markChatUnread(const ChatSession *session) {
     if (m_unreadSessions.contains(session->id()))
         return;
     m_unreadSessions.insert(session->id());
-    m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions);
+    m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions, draftSessionIds());
 }
 
 QSet<QUuid> MainWindow::runningSessionIds() const {

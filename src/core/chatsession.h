@@ -8,6 +8,8 @@
 #include <QUuid>
 #include <QVector>
 
+#include <utility>
+
 namespace okapi {
 
 class ChatSession : public QObject {
@@ -34,6 +36,14 @@ public:
     [[nodiscard]] QDateTime lastActivityAt() const { return m_lastActivityAt; }
     void setCreatedAt(const QDateTime &createdAt);
     void setLastActivityAt(const QDateTime &lastActivityAt);
+
+    // Unsaved composer text of this chat (per-chat draft, persisted in the
+    // sessions table so it survives restarts). Never null: a null QString
+    // would bind as SQL NULL and violate the column's NOT NULL constraint.
+    [[nodiscard]] QString draft() const { return m_draft; }
+    void setDraft(QString draft) {
+        m_draft = draft.isNull() ? QStringLiteral("") : std::move(draft);
+    }
 
     [[nodiscard]] const QVector<Message> &messages() const { return m_messages; }
 
@@ -80,6 +90,7 @@ private:
     QVector<Message> m_messages;
     QDateTime m_createdAt = QDateTime::currentDateTime();
     QDateTime m_lastActivityAt = m_createdAt;
+    QString m_draft = QStringLiteral("");
 };
 
 } // namespace okapi

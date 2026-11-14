@@ -252,6 +252,18 @@ private:
     void applyPrefetchedMessages(const QString &sessionId, const QVector<StoredMessage> &messages,
                                  int loadedCount);
     void persistSession(ChatSession *session);
+    // Per-chat composer drafts: the composer content belongs to the current
+    // chat and unsent text is kept as a draft (persisted in the sessions
+    // table so it survives restarts; chats with a draft get a
+    // document-edit icon in the sidebar).
+    void onComposerTextChanged(const QString &text);
+    // Stores the composer text as the current chat's draft and persists it.
+    void saveCurrentDraft();
+    // Loads the current chat's draft into the composer (on chat switch).
+    void loadDraftIntoComposer();
+    // Writes the current chat's draft to the database (debounced).
+    void persistCurrentDraft();
+    [[nodiscard]] QSet<QUuid> draftSessionIds() const;
     void persistMessageForSession(ChatSession *session, const Message &message);
     // Re-persists an assistant message so its current tool calls (status and
     // results) are stored.
@@ -398,6 +410,10 @@ private:
     QString m_statusBase;
     QString m_transientStatus;
     QTimer *m_transientStatusTimer = nullptr;
+    // Debounces persisting the current chat's composer draft to the database.
+    QTimer *m_draftSaveTimer = nullptr;
+    // Guards loadDraftIntoComposer() against the textChanged signal it causes.
+    bool m_loadingDraft = false;
 };
 
 } // namespace okapi
