@@ -878,7 +878,10 @@
         el.dataset.streaming = streaming;
         // A user message (re-)engages the automatic scrolling: sending a
         // message implies the user wants to watch this turn.
-        if (role === 'user') autoScroll = true;
+        if (role === 'user') {
+          autoScroll = true;
+          followCap = true;
+        }
         // Scroll only for user messages, freshly created elements (history
         // loads and session renders should end at the bottom) and while an
         // answer streams (capped at the last user message). A live
@@ -917,6 +920,10 @@
       // content only as far as the last user message stays fully visible;
       // any user scroll immediately stops the automatic scrolling.
       var autoScroll = true;
+      // The streaming cap (last user message fully visible) only applies
+      // while auto-follow was engaged automatically; when the user scrolls to
+      // the bottom manually, the true end is followed instead.
+      var followCap = true;
       var programmaticScroll = false;
       var programmaticTarget = 0;
 
@@ -949,7 +956,7 @@
           // it must stay fully visible while the model works on it.
           var viewportH = window.innerHeight;
           var target = Math.max(0, document.body.scrollHeight - viewportH);
-          var userMsg = lastUserMessage();
+          var userMsg = followCap ? lastUserMessage() : null;
           if (userMsg) {
             var rect = userMsg.getBoundingClientRect();
             var top = rect.top + window.scrollY;
@@ -974,14 +981,23 @@
         if (programmaticScroll && Math.abs(window.scrollY - programmaticTarget) < 2) {
           programmaticScroll = false;
         } else {
-          // The user scrolled: stop following the content immediately.
-          autoScroll = false;
+          // The user scrolled: stop following the content immediately — but
+          // when the scroll reaches the very bottom (e.g. while an answer is
+          // still streaming), auto-follow re-engages and keeps tracking the
+          // end; scrolling up again disengages it right away.
+          var below = document.body.scrollHeight - window.scrollY - window.innerHeight;
+          autoScroll = below <= 2;
+          if (autoScroll) followCap = false; // manual: follow the true end
         }
         updateJumpButton();
         if (window.scrollY < 40 && window.qtBridge) window.qtBridge.notifyScrolledToTop();
       });
       window.addEventListener('wheel', function () {
-        autoScroll = false;
+        // Same rule as the scroll handler: wheeling while already at the
+        // bottom keeps/re-engages auto-follow; wheeling up disengages it.
+        var below = document.body.scrollHeight - window.scrollY - window.innerHeight;
+        autoScroll = below <= 2;
+        if (autoScroll) followCap = false; // manual: follow the true end
         updateJumpButton();
       });
       window.addEventListener('resize', updateJumpButton);
@@ -989,6 +1005,7 @@
       document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('jump-btn').addEventListener('click', function () {
           autoScroll = true;
+          followCap = false; // manual go-to-end: follow the true end
           scrollToBottom();
         });
         // Links in chat messages open in the default web browser (via the
