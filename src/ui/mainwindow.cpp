@@ -255,8 +255,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     resize(1100, 720);
 
     if (!openDatabase())
-        statusBar()->showMessage(tr("Warning: chat storage unavailable, chats will not be "
-                                    "persisted."));
+        setStatusBase(tr("Warning: chat storage unavailable, chats will not be "
+                         "persisted."));
     loadBackendsFromDatabase();
     loadMcpServersFromDatabase();
     loadSttSettingsFromDatabase();
@@ -362,7 +362,7 @@ void MainWindow::setupUi() {
     statusBar()->addPermanentWidget(m_statusLabel);
     m_mcpStatusLabel = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
-    statusBar()->showMessage(tr("Ready"));
+    setStatusBase(tr("Ready"));
 }
 
 void MainWindow::setupConnections() {
@@ -437,11 +437,11 @@ void MainWindow::setupConnections() {
     connect(&m_voiceInput, &VoiceInput::transcriptionUpdated, this, [this](const QString &text) {
         m_dictatedText.clear();
         m_composer->finishDictation(text);
-        statusBar()->showMessage(tr("Dictation finished."), 5000);
+        showTransientStatus(tr("Dictation finished."), 5000);
     });
     connect(&m_voiceInput, &VoiceInput::error, this, [this](const QString &message) {
         m_composer->setDictationActive(false);
-        statusBar()->showMessage(tr("Dictation failed: %1").arg(message), 10000);
+        showTransientStatus(tr("Dictation failed: %1").arg(message), 10000);
     });
     connect(&m_sttRegistry, &SttRegistry::changed, this, [this]() { configureVoiceInput(); });
     connect(&m_ttsRegistry, &TtsRegistry::changed, this, [this]() { configureTts(); });
@@ -456,10 +456,10 @@ void MainWindow::setupConnections() {
         } else {
             message = tr("Ready");
         }
-        statusBar()->showMessage(message, timeout);
+        showTransientStatus(message, timeout);
     });
     connect(&m_ttsPlayer, &TtsPlayer::error, this, [this](const QString &message) {
-        statusBar()->showMessage(tr("Text-to-speech failed: %1").arg(message), 10000);
+        showTransientStatus(tr("Text-to-speech failed: %1").arg(message), 10000);
     });
     connect(m_speakButton, &QPushButton::clicked, this, &MainWindow::onSpeakResponsesToggled);
     setupChatViewConnections();
@@ -501,22 +501,20 @@ void MainWindow::setupConnections() {
             &MainWindow::onMcpPermissionRequested);
     connect(&m_mcpManager, &McpManager::serverLog, this,
             [this](const QString &serverName, const QString &level, const QString &message) {
-                statusBar()->showMessage(tr("MCP [%1] %2: %3").arg(serverName, level, message),
-                                         10000);
+                showTransientStatus(tr("MCP [%1] %2: %3").arg(serverName, level, message), 10000);
             });
     connect(&m_mcpManager, &McpManager::serverStateChanged, this,
             [this](const QString &, const QString &serverName, bool connected) {
-                statusBar()->showMessage(
-                    connected ? tr("MCP server \"%1\" connected.").arg(serverName)
-                              : tr("MCP server \"%1\" disconnected.").arg(serverName),
-                    5000);
+                showTransientStatus(connected
+                                        ? tr("MCP server \"%1\" connected.").arg(serverName)
+                                        : tr("MCP server \"%1\" disconnected.").arg(serverName),
+                                    5000);
                 onMcpToolsChanged();
             });
     connect(&m_mcpManager, &McpManager::toolResultReady, this, &MainWindow::onToolResultReady);
     connect(&m_mcpManager, &McpManager::toolCallFailed, this,
             [this](const QString &toolName, const QString &error) {
-                statusBar()->showMessage(tr("MCP tool \"%1\" failed: %2").arg(toolName, error),
-                                         10000);
+                showTransientStatus(tr("MCP tool \"%1\" failed: %2").arg(toolName, error), 10000);
             });
 }
 
@@ -709,10 +707,7 @@ void MainWindow::setupChatViewConnections() {
             QDesktopServices::openUrl(parsed);
     });
     connect(m_chatView, &WebChatView::linkHovered, this, [this](const QString &url) {
-        if (url.isEmpty())
-            statusBar()->clearMessage();
-        else
-            statusBar()->showMessage(url);
+        showTransientStatus(url); // empty clears the transient, base shows again
     });
     // Clicking a file element in a user message opens the file with the
     // system's default application (non-modal error if that fails).
@@ -1545,8 +1540,7 @@ void MainWindow::onSend(const QString &text, const QVector<ImageAttachment> &ima
         m_pendingMessages.append({.text = text, .images = images, .files = files});
         m_composer->clearText();
         m_composer->clearAttachments();
-        statusBar()->showMessage(tr("Queued — will be sent when the current response finishes."),
-                                 5000);
+        showTransientStatus(tr("Queued — will be sent when the current response finishes."), 5000);
         return;
     }
     if (!m_editingMessageId.isNull()) {
@@ -1838,7 +1832,7 @@ void MainWindow::finalizeContext(StreamContext *context, const QString &statusMe
     if (isCurrent) {
         if (m_ttsRegistry.speakResponses())
             m_ttsPlayer.endOfText();
-        statusBar()->showMessage(statusMessage);
+        setStatusBase(statusMessage);
         m_composer->focusInput();
     }
     updateStreamingUi();
@@ -1905,6 +1899,34 @@ void MainWindow::cancelContext(ChatSession *session) {
     }
 }
 
+void MainWindow::setStatusBase(const QString &message) {
+    m_statusBase = message;
+    updateStatusBarMessage();
+}
+
+void MainWindow::showTransientStatus(const QString &message, int timeoutMs) {
+    m_transientStatus = message;
+    if (!m_transientStatusTimer) {
+        m_transientStatusTimer = new QTimer(this);
+        m_transientStatusTimer->setSingleShot(true);
+        connect(m_transientStatusTimer, &QTimer::timeout, this, [this]() {
+            m_transientStatus.clear();
+            updateStatusBarMessage();
+        });
+    }
+    if (timeoutMs > 0)
+        m_transientStatusTimer->start(timeoutMs);
+    else
+        m_transientStatusTimer->stop();
+    updateStatusBarMessage();
+}
+
+void MainWindow::updateStatusBarMessage() {
+    // Transient (more specific) messages win over the base; when they expire,
+    // the base ("Generating…" while busy, else "Ready"/error) shows again.
+    statusBar()->showMessage(m_transientStatus.isEmpty() ? m_statusBase : m_transientStatus);
+}
+
 void MainWindow::updateStreamingUi() {
     const StreamContext *context = contextFor(m_currentSession);
     // A context whose turn already finished (streaming == false, no tool
@@ -1916,8 +1938,8 @@ void MainWindow::updateStreamingUi() {
     m_sendButton->setVisible(!busy);
     m_stopButton->setVisible(busy);
     if (busy)
-        statusBar()->showMessage(context->runningTools ? tr("Running MCP tools\u2026")
-                                                       : tr("Generating\u2026"));
+        setStatusBase(context->runningTools ? tr("Running MCP tools\u2026")
+                                            : tr("Generating\u2026"));
     m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions);
     updateEmptyState();
 }
@@ -2028,9 +2050,9 @@ void MainWindow::onToolResultReady(const QString &toolName, const QString &resul
     // requested it; the chat repaints the element without the spinner.
     if (markRunningToolCallResult(toolName, resultText, isError))
         return;
-    statusBar()->showMessage(isError ? tr("MCP tool \"%1\" failed.").arg(toolName)
-                                     : tr("MCP tool \"%1\" finished.").arg(toolName),
-                             5000);
+    showTransientStatus(isError ? tr("MCP tool \"%1\" failed.").arg(toolName)
+                                : tr("MCP tool \"%1\" finished.").arg(toolName),
+                        5000);
 }
 
 void MainWindow::runToolCalls(StreamContext *context, const QUuid &assistantMessageId,
