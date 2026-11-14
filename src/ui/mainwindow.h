@@ -121,8 +121,8 @@ public:
     // the error), and a late finished() for the same message afterwards.
     void simulateStreamErrorForTest(const QString &error, int httpStatus = 0);
     void simulateLateStreamFinishForTest();
-    void simulateTransientStatusForTest(const QString &message) {
-        showTransientStatus(message, 10000);
+    void simulateTransientStatusForTest(const QString &message, int timeoutMs = 10000) {
+        showTransientStatus(message, timeoutMs);
     }
     void sendTextForTest(const QString &text) { onSend(text, {}, {}); }
     void startEditMessageForTest(const QUuid &id) {
@@ -288,10 +288,14 @@ private:
     // Reflects the current chat's turn state in composer, stop button and
     // status bar, and pushes the running/unread badges to the sidebar.
     void updateStreamingUi();
-    // Transient status messages (MCP logs, TTS, hovers, ...) must not
-    // overwrite the busy status ("Generating…"/"Running MCP tools…") while a
-    // turn is in flight — the sidebar spinner is the source of truth there.
+    // Status bar priority: the base message ("Ready"/error from
+    // finalizeContext(), "Generating…"/"Running MCP tools…" while busy) is
+    // the lowest-priority fallback; transient messages (MCP logs, TTS, link
+    // hovers, ...) are more specific and shown on top, falling back to the
+    // base when they expire.
+    void setStatusBase(const QString &message);
     void showTransientStatus(const QString &message, int timeoutMs = 0);
+    void updateStatusBarMessage();
     // Marks the first running tool call with the given name (across all
     // chats) done/failed; returns whether one was found.
     [[nodiscard]] bool markRunningToolCallResult(const QString &toolName, const QString &resultText,
@@ -391,6 +395,9 @@ private:
     };
     std::shared_ptr<PrefetchQueue> m_prefetchQueue = std::make_shared<PrefetchQueue>();
     QTimer *m_prefetchDrainTimer = nullptr;
+    QString m_statusBase;
+    QString m_transientStatus;
+    QTimer *m_transientStatusTimer = nullptr;
 };
 
 } // namespace okapi

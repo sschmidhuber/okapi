@@ -255,8 +255,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     resize(1100, 720);
 
     if (!openDatabase())
-        statusBar()->showMessage(tr("Warning: chat storage unavailable, chats will not be "
-                                    "persisted."));
+        setStatusBase(tr("Warning: chat storage unavailable, chats will not be "
+                         "persisted."));
     loadBackendsFromDatabase();
     loadMcpServersFromDatabase();
     loadSttSettingsFromDatabase();
@@ -362,7 +362,7 @@ void MainWindow::setupUi() {
     statusBar()->addPermanentWidget(m_statusLabel);
     m_mcpStatusLabel = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
-    statusBar()->showMessage(tr("Ready"));
+    setStatusBase(tr("Ready"));
 }
 
 void MainWindow::setupConnections() {
@@ -707,10 +707,7 @@ void MainWindow::setupChatViewConnections() {
             QDesktopServices::openUrl(parsed);
     });
     connect(m_chatView, &WebChatView::linkHovered, this, [this](const QString &url) {
-        if (url.isEmpty())
-            statusBar()->clearMessage();
-        else
-            showTransientStatus(url);
+        showTransientStatus(url); // empty clears the transient, base shows again
     });
     // Clicking a file element in a user message opens the file with the
     // system's default application (non-modal error if that fails).
@@ -1835,7 +1832,7 @@ void MainWindow::finalizeContext(StreamContext *context, const QString &statusMe
     if (isCurrent) {
         if (m_ttsRegistry.speakResponses())
             m_ttsPlayer.endOfText();
-        statusBar()->showMessage(statusMessage);
+        setStatusBase(statusMessage);
         m_composer->focusInput();
     }
     updateStreamingUi();
@@ -1902,11 +1899,32 @@ void MainWindow::cancelContext(ChatSession *session) {
     }
 }
 
+void MainWindow::setStatusBase(const QString &message) {
+    m_statusBase = message;
+    updateStatusBarMessage();
+}
+
 void MainWindow::showTransientStatus(const QString &message, int timeoutMs) {
-    const StreamContext *context = contextFor(m_currentSession);
-    if (context && (context->streaming || context->runningTools))
-        return; // busy: keep "Generating…"/"Running MCP tools…"
-    statusBar()->showMessage(message, timeoutMs);
+    m_transientStatus = message;
+    if (!m_transientStatusTimer) {
+        m_transientStatusTimer = new QTimer(this);
+        m_transientStatusTimer->setSingleShot(true);
+        connect(m_transientStatusTimer, &QTimer::timeout, this, [this]() {
+            m_transientStatus.clear();
+            updateStatusBarMessage();
+        });
+    }
+    if (timeoutMs > 0)
+        m_transientStatusTimer->start(timeoutMs);
+    else
+        m_transientStatusTimer->stop();
+    updateStatusBarMessage();
+}
+
+void MainWindow::updateStatusBarMessage() {
+    // Transient (more specific) messages win over the base; when they expire,
+    // the base ("Generating…" while busy, else "Ready"/error) shows again.
+    statusBar()->showMessage(m_transientStatus.isEmpty() ? m_statusBase : m_transientStatus);
 }
 
 void MainWindow::updateStreamingUi() {
@@ -1920,8 +1938,8 @@ void MainWindow::updateStreamingUi() {
     m_sendButton->setVisible(!busy);
     m_stopButton->setVisible(busy);
     if (busy)
-        statusBar()->showMessage(context->runningTools ? tr("Running MCP tools\u2026")
-                                                       : tr("Generating\u2026"));
+        setStatusBase(context->runningTools ? tr("Running MCP tools\u2026")
+                                            : tr("Generating\u2026"));
     m_sidebar->setIndicators(runningSessionIds(), m_unreadSessions);
     updateEmptyState();
 }

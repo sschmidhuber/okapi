@@ -72,7 +72,7 @@ private slots:
     void switchingToNewBackendDoesNotLeakOldModel();
     void reconfiguredBackendDropsStaleDetectedModels();
     void streamErrorSurvivesLateFinished();
-    void transientStatusKeepsGeneratingWhileBusy();
+    void transientStatusFallsBackToGenerating();
     void toolCallFailureAppendsToolMessageWithoutCrashing();
     void keyboardShortcuts();
     void reboundShortcutFiresImmediately();
@@ -265,7 +265,7 @@ void TestMainWindow::streamErrorSurvivesLateFinished() {
 // Regression test: while a turn is streaming, transient status messages
 // (MCP logs, TTS, link hovers, ...) must not overwrite "Generating…" in the
 // status bar — the sidebar spinner is the source of truth.
-void TestMainWindow::transientStatusKeepsGeneratingWhileBusy() {
+void TestMainWindow::transientStatusFallsBackToGenerating() {
     MainWindow window;
     window.show();
     auto &registry = window.registryForTest();
@@ -279,16 +279,22 @@ void TestMainWindow::transientStatusKeepsGeneratingWhileBusy() {
     window.simulateStreamStartForTest();
     QCOMPARE(statusBar->currentMessage(), QStringLiteral("Generating\u2026"));
 
-    window.simulateTransientStatusForTest(QStringLiteral("MCP: 2 tool(s)"));
+    // A more specific transient message wins while busy…
+    window.simulateTransientStatusForTest(QStringLiteral("MCP: 2 tool(s)"), 50);
+    QCOMPARE(statusBar->currentMessage(), QStringLiteral("MCP: 2 tool(s)"));
+    // …but when it expires, the lowest-priority base ("Generating…") returns.
+    QTest::qWait(150);
     QCOMPARE(statusBar->currentMessage(), QStringLiteral("Generating\u2026"));
 
     window.simulateStreamFinishForTest();
     QTest::qWait(20);
     QCOMPARE(statusBar->currentMessage(), QStringLiteral("Ready"));
 
-    // Not busy anymore: transient messages show again.
-    window.simulateTransientStatusForTest(QStringLiteral("MCP: 2 tool(s)"));
+    // Not busy: base is "Ready"; a transient overrides it and falls back.
+    window.simulateTransientStatusForTest(QStringLiteral("MCP: 2 tool(s)"), 50);
     QCOMPARE(statusBar->currentMessage(), QStringLiteral("MCP: 2 tool(s)"));
+    QTest::qWait(150);
+    QCOMPARE(statusBar->currentMessage(), QStringLiteral("Ready"));
 }
 
 // Regression test: a synchronously failing MCP tool call (unknown tool, no
