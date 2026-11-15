@@ -116,53 +116,7 @@ Sidebar::Sidebar(QWidget *parent) : QWidget(parent), m_tree(new QTreeWidget(this
             return;
         emit sessionSelected(QUuid(item->data(0, kSessionIdRole).toString()));
     });
-    connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
-        auto *item = m_tree->itemAt(pos);
-        if (!item)
-            return;
-        // Right-clicking an item outside the selection selects only that
-        // item; right-clicking a selected item keeps the multi-selection.
-        // (setCurrentItem alone does not clear the selection in
-        // ExtendedSelection mode.)
-        if (!item->isSelected()) {
-            m_tree->clearSelection();
-            m_tree->setCurrentItem(item);
-        }
-        QMenu menu(this);
-        const bool isChat = !item->data(0, kIsGroupRole).toBool();
-        const QString section = sectionOf(item);
-        if (section == QLatin1String("deleted")) {
-            // Chats in the "Deleted" section can be restored or removed
-            // permanently.
-            const QList<QUuid> targets = selectedDeletedSessionIds(item);
-            auto *restoreAction = menu.addAction(tr("Restore"));
-            auto *permanentAction = menu.addAction(tr("Permanently delete"));
-            const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos));
-            if (picked == restoreAction)
-                emit sessionRestoreRequested(targets);
-            else if (picked == permanentAction)
-                emit sessionPermanentDeleteRequested(targets);
-            return;
-        }
-        QAction *pinAction = nullptr;
-        QUuid pinId;
-        bool pinState = false;
-        if (isChat) {
-            pinId = QUuid(item->data(0, kSessionIdRole).toString());
-            pinState = item->data(0, kPinnedRole).toBool();
-            pinAction = menu.addAction(pinState ? tr("Unpin chat") : tr("Pin chat"));
-        }
-        auto *deleteAction = menu.addAction(tr("Delete chat"));
-        const QList<QUuid> deletable = deletableSelectedSessionIds();
-        // Running, unread and already deleted chats can never be deleted.
-        deleteAction->setEnabled(!deletable.isEmpty());
-        if (const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos))) {
-            if (picked == pinAction)
-                emit sessionPinToggled(pinId, !pinState);
-            else if (picked == deleteAction)
-                emit sessionDeleteRequested(deletable);
-        }
-    });
+    connect(m_tree, &QTreeWidget::customContextMenuRequested, this, &Sidebar::showContextMenu);
     // The Delete key removes the selected chats while the tree has focus.
     auto *deleteShortcut = new QShortcut(QKeySequence(Qt::Key_Delete), m_tree);
     deleteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -257,6 +211,54 @@ void Sidebar::setSessions(const QVector<ChatSession *> &sessions) {
     if (!current.isNull())
         selectSession(current);
     applyIndicators();
+}
+
+void Sidebar::showContextMenu(const QPoint &pos) {
+    auto *item = m_tree->itemAt(pos);
+    if (!item)
+        return;
+    // Right-clicking an item outside the selection selects only that
+    // item; right-clicking a selected item keeps the multi-selection.
+    // (setCurrentItem alone does not clear the selection in
+    // ExtendedSelection mode.)
+    if (!item->isSelected()) {
+        m_tree->clearSelection();
+        m_tree->setCurrentItem(item);
+    }
+    QMenu menu(this);
+    const bool isChat = !item->data(0, kIsGroupRole).toBool();
+    const QString section = sectionOf(item);
+    if (section == QLatin1String("deleted")) {
+        // Chats in the "Deleted" section can be restored or removed
+        // permanently.
+        const QList<QUuid> targets = selectedDeletedSessionIds(item);
+        auto *restoreAction = menu.addAction(tr("Restore"));
+        auto *permanentAction = menu.addAction(tr("Permanently delete"));
+        const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos));
+        if (picked == restoreAction)
+            emit sessionRestoreRequested(targets);
+        else if (picked == permanentAction)
+            emit sessionPermanentDeleteRequested(targets);
+        return;
+    }
+    QAction *pinAction = nullptr;
+    QUuid pinId;
+    bool pinState = false;
+    if (isChat) {
+        pinId = QUuid(item->data(0, kSessionIdRole).toString());
+        pinState = item->data(0, kPinnedRole).toBool();
+        pinAction = menu.addAction(pinState ? tr("Unpin chat") : tr("Pin chat"));
+    }
+    auto *deleteAction = menu.addAction(tr("Delete chat"));
+    const QList<QUuid> deletable = deletableSelectedSessionIds();
+    // Running, unread and already deleted chats can never be deleted.
+    deleteAction->setEnabled(!deletable.isEmpty());
+    if (const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos))) {
+        if (picked == pinAction)
+            emit sessionPinToggled(pinId, !pinState);
+        else if (picked == deleteAction)
+            emit sessionDeleteRequested(deletable);
+    }
 }
 
 QTreeWidgetItem *Sidebar::makeChatItem(QTreeWidgetItem *parent, const ChatSession *session) {
@@ -361,10 +363,8 @@ QList<QUuid> Sidebar::deletableSelectedSessionIds() const {
         // Already deleted chats are not deleted again; they are restored or
         // permanently deleted via their own context-menu entries.
         QTreeWidgetItem *found = nullptr;
-        for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
-            if ((found = findItem(m_tree->topLevelItem(i), id.toString())))
-                break;
-        }
+        for (int i = 0; i < m_tree->topLevelItemCount() && !found; ++i)
+            found = findItem(m_tree->topLevelItem(i), id.toString());
         return found && sectionOf(found) == QLatin1String("deleted");
     });
     ids.erase(removed.begin(), removed.end());

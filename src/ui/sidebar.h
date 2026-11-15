@@ -73,10 +73,13 @@ private:
     // The section ("pinned"/"date"/"deleted") the item belongs to, found by
     // walking up the parents; empty for the "time" sub-groups of "Date".
     [[nodiscard]] static QString sectionOf(const QTreeWidgetItem *item);
-    [[nodiscard]] QTreeWidgetItem *makeChatItem(QTreeWidgetItem *parent,
-                                                const ChatSession *session);
+    [[nodiscard]] static QTreeWidgetItem *makeChatItem(QTreeWidgetItem *parent,
+                                                       const ChatSession *session);
     void collectChatIds(const QTreeWidgetItem *item, QSet<QUuid> &ids) const;
     [[nodiscard]] QList<QUuid> selectedDeletedSessionIds(const QTreeWidgetItem *clicked) const;
+    // Context menu at the given viewport position (pin/unpin, delete, or
+    // restore/permanently delete for the "Deleted" section).
+    void showContextMenu(const QPoint &pos);
 
     QTreeWidget *m_tree;
     QTimer *m_spinnerTimer = nullptr;
