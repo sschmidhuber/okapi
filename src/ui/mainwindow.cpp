@@ -414,6 +414,11 @@ void MainWindow::setupConnections() {
     connect(m_sidebar, &Sidebar::sessionSelected, this, &MainWindow::onSessionSelected);
     connect(m_sidebar, &Sidebar::sessionDeleteRequested, this,
             &MainWindow::onSessionDeleteRequested);
+    connect(m_sidebar, &Sidebar::sessionPinToggled, this, &MainWindow::onSessionPinToggled);
+    connect(m_sidebar, &Sidebar::sessionRestoreRequested, this,
+            &MainWindow::onSessionRestoreRequested);
+    connect(m_sidebar, &Sidebar::sessionPermanentDeleteRequested, this,
+            &MainWindow::onSessionPermanentDeleteRequested);
     connect(m_composer, &Composer::sendRequested, this,
             [this](const QString &text, const QVector<ImageAttachment> &images,
                    const QVector<FileAttachment> &files) { onSend(text, images, files); });
@@ -640,23 +645,29 @@ ChatSession *MainWindow::sessionForTest(const QUuid &id) const {
 }
 
 void MainWindow::cycleChat(int direction) {
-    if (m_sessions.isEmpty())
+    // Deleted chats (sidebar "Deleted" section) are not part of the cycle.
+    QVector<ChatSession *> cyclable;
+    for (auto *session : m_sessions) {
+        if (!session->deletedAt().isValid())
+            cyclable.push_back(session);
+    }
+    if (cyclable.isEmpty())
         return;
     // The sidebar lists chats sorted by last activity (newest first);
     // cycling walks that visual order and wraps around at both ends.
-    std::ranges::sort(m_sessions, [](const ChatSession *a, const ChatSession *b) {
+    std::ranges::sort(cyclable, [](const ChatSession *a, const ChatSession *b) {
         return a->lastActivityAt() > b->lastActivityAt();
     });
-    const int count = static_cast<int>(m_sessions.size());
+    const int count = static_cast<int>(cyclable.size());
     int index = 0;
     for (int i = 0; i < count; ++i) {
-        if (m_sessions.at(i) == m_currentSession) {
+        if (cyclable.at(i) == m_currentSession) {
             index = i;
             break;
         }
     }
     index = (index + direction + count) % count;
-    onSessionSelected(m_sessions.at(index)->id());
+    onSessionSelected(cyclable.at(index)->id());
 }
 
 void MainWindow::onSessionDeleteRequested(const QList<QUuid> &ids) {
@@ -665,7 +676,9 @@ void MainWindow::onSessionDeleteRequested(const QList<QUuid> &ids) {
     const QSet<QUuid> running = runningSessionIds();
     QList<QUuid> toDelete;
     for (const QUuid &id : ids) {
-        if (!id.isNull() && !running.contains(id) && !m_unreadSessions.contains(id))
+        const ChatSession *session = sessionForTest(id);
+        if (!id.isNull() && session && !session->deletedAt().isValid() && !running.contains(id) &&
+            !m_unreadSessions.contains(id))
             toDelete.append(id);
     }
     if (toDelete.isEmpty())
@@ -679,8 +692,87 @@ void MainWindow::onSessionDeleteRequested(const QList<QUuid> &ids) {
         if (answer != QMessageBox::Yes)
             return;
     }
+    // Deletion is soft: the chats move to the sidebar's "Deleted" section
+    // and can be restored from there (they are purged permanently 30 days
+    // after the deletion).
+    for (const QUuid &id : toDelete)
+        softDeleteSession(id);
+}
+
+void MainWindow::softDeleteSession(const QUuid &id) {
+    ChatSession *session = sessionForTest(id);
+    if (!session || session->deletedAt().isValid())
+        return;
+    const QDateTime now = QDateTime::currentDateTime();
+    session->setDeletedAt(now);
+    if (m_database.isOpen())
+        m_database.setSessionDeletedAt(id.toString(QUuid::WithoutBraces), now);
+    m_unreadSessions.remove(id);
+    if (session == m_currentSession) {
+        m_currentSession = nullptr;
+        m_chatView->setSession(nullptr);
+    }
+    refreshSidebar();
+    if (!m_currentSession)
+        selectFallbackSession();
+    updateStreamingUi();
+    updateEmptyState();
+}
+
+void MainWindow::onSessionPinToggled(const QUuid &id, bool pin) {
+    ChatSession *session = sessionForTest(id);
+    if (!session)
+        return;
+    session->setPinned(pin);
+    if (m_database.isOpen())
+        m_database.setSessionPinned(id.toString(QUuid::WithoutBraces), pin);
+    refreshSidebar();
+}
+
+void MainWindow::onSessionRestoreRequested(const QList<QUuid> &ids) {
+    bool changed = false;
+    for (const QUuid &id : ids) {
+        ChatSession *session = sessionForTest(id);
+        if (!session || !session->deletedAt().isValid())
+            continue;
+        session->setDeletedAt(QDateTime());
+        if (m_database.isOpen())
+            m_database.setSessionDeletedAt(id.toString(QUuid::WithoutBraces), QDateTime());
+        changed = true;
+    }
+    if (changed)
+        refreshSidebar();
+}
+
+void MainWindow::onSessionPermanentDeleteRequested(const QList<QUuid> &ids) {
+    QList<QUuid> toDelete;
+    for (const QUuid &id : ids) {
+        ChatSession *session = sessionForTest(id);
+        if (session && session->deletedAt().isValid())
+            toDelete.append(id);
+    }
+    if (toDelete.isEmpty())
+        return;
+    const auto answer =
+        QMessageBox::question(this, tr("Permanently delete chats"),
+                              tr("Do you really want to permanently delete %1 chat(s)? "
+                                 "This cannot be undone.")
+                                  .arg(toDelete.size()),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
     for (const QUuid &id : toDelete)
         deleteSession(id);
+}
+
+void MainWindow::selectFallbackSession() {
+    for (auto *session : m_sessions) {
+        if (!session->deletedAt().isValid()) {
+            onSessionSelected(session->id());
+            return;
+        }
+    }
+    createSession();
 }
 
 void MainWindow::deleteSession(const QUuid &id) {
@@ -701,10 +793,8 @@ void MainWindow::deleteSession(const QUuid &id) {
     }
     m_unreadSessions.remove(id);
     refreshSidebar();
-    if (m_sessions.isEmpty())
-        createSession();
-    else if (!m_currentSession)
-        onSessionSelected(m_sessions.first()->id());
+    if (!m_currentSession)
+        selectFallbackSession();
     else
         updateEmptyState();
 }
@@ -1092,6 +1182,8 @@ void MainWindow::configureVoiceInput() {
 bool MainWindow::openDatabase() {
     if (!m_database.open(defaultDatabasePath()))
         return false;
+    // Chats deleted more than 30 days ago are purged permanently on startup.
+    m_database.deleteSessionsDeletedBefore(QDateTime::currentDateTime().addDays(-30));
     // Sessions come back ordered by last activity (newest first); keep that
     // order so the sidebar's time groups list recent chats first. Only the
     // session metadata is read here: message content (including image data
@@ -1107,6 +1199,8 @@ bool MainWindow::openDatabase() {
         session->setCreatedAt(stored.createdAt);
         session->setLastActivityAt(stored.lastActivityAt);
         session->setDraft(stored.draft);
+        session->setPinned(stored.pinned);
+        session->setDeletedAt(stored.deletedAt);
         session->setProperty("okapi_loadedCount", 0);
         session->setProperty("okapi_messagesLoaded", false);
         session->setProperty("okapi_persisted", true);

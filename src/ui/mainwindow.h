@@ -111,6 +111,11 @@ public:
         onModelsDetected(backendId, models);
     }
     void requestDeleteSessionsForTest(const QList<QUuid> &ids) { onSessionDeleteRequested(ids); }
+    void pinChatForTest(const QUuid &id, bool pin) { onSessionPinToggled(id, pin); }
+    void restoreSessionsForTest(const QList<QUuid> &ids) { onSessionRestoreRequested(ids); }
+    void permanentlyDeleteSessionsForTest(const QList<QUuid> &ids) {
+        onSessionPermanentDeleteRequested(ids);
+    }
     void markUnreadForTest(const QUuid &id) { m_unreadSessions.insert(id); }
     [[nodiscard]] ChatSession *sessionForTest(const QUuid &id) const;
     void selectSessionForTest(const QUuid &id) { onSessionSelected(id); }
@@ -155,9 +160,18 @@ private slots:
     void navigatePromptMenu(int delta);
     void confirmPromptMenu(int row = -1);
     void closePromptMenu();
-    // Deletes the given chats; asks for confirmation when there are several.
-    // Running and unread chats are never deleted.
+    // Soft-deletes the given chats (moves them to the sidebar's "Deleted"
+    // section); asks for confirmation when there are several. Running and
+    // unread chats are never deleted.
     void onSessionDeleteRequested(const QList<QUuid> &ids);
+    // Pins/unpins one chat (sidebar context menu).
+    void onSessionPinToggled(const QUuid &id, bool pin);
+    // Restores soft-deleted chats from the "Deleted" section back into the
+    // date-based tree.
+    void onSessionRestoreRequested(const QList<QUuid> &ids);
+    // Permanently removes chats from the "Deleted" section (with
+    // confirmation), including their messages.
+    void onSessionPermanentDeleteRequested(const QList<QUuid> &ids);
     // Selects the next (direction 1) or previous (direction -1) chat of the
     // history in the sidebar's order, wrapping around at both ends.
     void cycleChat(int direction);
@@ -206,7 +220,13 @@ private:
     void onStreamFailed(StreamContext *context, const QUuid &messageId, const QString &error,
                         int httpStatus = 0);
     void createSession(const QString &backendId = {}, const QString &model = {});
+    // Moves a chat to the "Deleted" section (keeps it restorable).
+    void softDeleteSession(const QUuid &id);
+    // Removes a chat completely (messages included) and cancels its turn.
     void deleteSession(const QUuid &id);
+    // After the current chat was deleted/removed: selects the first
+    // non-deleted chat, or starts a new chat when none is left.
+    void selectFallbackSession();
     void refreshSidebar();
     void refreshBackendSelector();
     // Previously detected models for one backend (plus the persisted

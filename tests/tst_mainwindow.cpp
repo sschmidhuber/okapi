@@ -32,18 +32,49 @@ namespace {
 // MainWindow instances of the test process share one temp database, so
 // counting items would include sessions of earlier tests; assert on the
 // specific ids instead.)
+// Finds the sidebar tree item of a chat by its session-id role (findItems
+// would match the display text instead). Chats live at different depths
+// (Pinned/Deleted directly, date groups nested under "Date").
+QTreeWidgetItem *findSessionItem(QTreeWidget *tree, const QUuid &id) {
+    const QString idString = id.toString();
+    const std::function<QTreeWidgetItem *(QTreeWidgetItem *)> find =
+        [&](QTreeWidgetItem *parent) -> QTreeWidgetItem * {
+        for (int i = 0; i < parent->childCount(); ++i) {
+            auto *child = parent->child(i);
+            if (child->data(0, Qt::UserRole).toString() == idString)
+                return child;
+            if (auto *nested = find(child))
+                return nested;
+        }
+        return nullptr;
+    };
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+        if (auto *item = find(tree->topLevelItem(i)))
+            return item;
+    }
+    return nullptr;
+}
+
 bool sidebarHasSession(MainWindow &window, const QUuid &id) {
     auto *tree = window.findChild<QTreeWidget *>();
+    return tree && findSessionItem(tree, id) != nullptr;
+}
+
+// The sidebar section ("pinned"/"date"/"deleted") the session is currently
+// listed in, or empty when the chat is not in the tree at all.
+QString sidebarSectionOf(MainWindow &window, const QUuid &id) {
+    auto *tree = window.findChild<QTreeWidget *>();
     if (!tree)
-        return false;
-    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
-        auto *group = tree->topLevelItem(i);
-        for (int j = 0; j < group->childCount(); ++j) {
-            if (QUuid(group->child(j)->data(0, Qt::UserRole).toString()) == id)
-                return true;
-        }
+        return {};
+    const auto *item = findSessionItem(tree, id);
+    if (!item)
+        return {};
+    for (const auto *p = item; p; p = p->parent()) {
+        const QString section = p->data(0, Qt::UserRole + 2).toString();
+        if (!section.isEmpty() && section != QLatin1String("time"))
+            return section;
     }
-    return false;
+    return {};
 }
 
 // Clicks the given button of the modal confirmation dialog that
@@ -95,6 +126,9 @@ private slots:
     void recentChatsArePrefetchedInBackground();
     void composerDraftIsPerChatAndRestoredOnSwitch();
     void composerDraftSurvivesRestart();
+    void pinChatMovesItToPinnedSection();
+    void restoreAndPermanentDeleteFromDeletedSection();
+    void chatsDeletedOver30DaysAgoArePurgedOnStartup();
 
 private:
     QTemporaryDir m_home;
@@ -480,8 +514,9 @@ void TestMainWindow::deleteSingleChatWithoutConfirmation() {
     QVERIFY(sidebarHasSession(window, second));
 
     window.requestDeleteSessionsForTest({second});
-    QVERIFY(!sidebarHasSession(window, second));
-    QVERIFY(sidebarHasSession(window, initial));
+    // Soft delete: the chat moved to the "Deleted" section, not gone entirely.
+    QCOMPARE(sidebarSectionOf(window, second), QStringLiteral("deleted"));
+    QCOMPARE(sidebarSectionOf(window, initial), QStringLiteral("date"));
     QVERIFY(window.currentSession());
     QCOMPARE(window.currentSession()->id(), initial);
 }
@@ -502,9 +537,9 @@ void TestMainWindow::deleteMultipleChatsAsksAndDeletesOnYes() {
 
     clickModalButton(QMessageBox::Yes);
     window.requestDeleteSessionsForTest({s0, s1, s2});
-    QVERIFY(!sidebarHasSession(window, s0));
-    QVERIFY(!sidebarHasSession(window, s1));
-    QVERIFY(!sidebarHasSession(window, s2));
+    QCOMPARE(sidebarSectionOf(window, s0), QStringLiteral("deleted"));
+    QCOMPARE(sidebarSectionOf(window, s1), QStringLiteral("deleted"));
+    QCOMPARE(sidebarSectionOf(window, s2), QStringLiteral("deleted"));
     QVERIFY(window.currentSession());
     QVERIFY(window.currentSession()->id() != s0);
     QVERIFY(window.currentSession()->id() != s1);
@@ -521,8 +556,8 @@ void TestMainWindow::deleteMultipleChatsKeepsAllOnNo() {
 
     clickModalButton(QMessageBox::No);
     window.requestDeleteSessionsForTest({s0, s1});
-    QVERIFY(sidebarHasSession(window, s0));
-    QVERIFY(sidebarHasSession(window, s1));
+    QCOMPARE(sidebarSectionOf(window, s0), QStringLiteral("date"));
+    QCOMPARE(sidebarSectionOf(window, s1), QStringLiteral("date"));
 }
 
 // Unread chats are never deleted: the unread one is filtered out before the
@@ -537,8 +572,8 @@ void TestMainWindow::unreadChatIsNotDeleted() {
     window.markUnreadForTest(unread);
 
     window.requestDeleteSessionsForTest({read, unread});
-    QVERIFY(!sidebarHasSession(window, read));
-    QVERIFY(sidebarHasSession(window, unread));
+    QCOMPARE(sidebarSectionOf(window, read), QStringLiteral("deleted"));
+    QCOMPARE(sidebarSectionOf(window, unread), QStringLiteral("date"));
     QVERIFY(window.currentSession());
     QCOMPARE(window.currentSession()->id(), unread);
 }
@@ -947,17 +982,12 @@ void TestMainWindow::composerDraftIsPerChatAndRestoredOnSwitch() {
     auto *tree = window.findChild<QTreeWidget *>();
     QVERIFY(tree);
     int badged = 0;
-    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
-        auto *group = tree->topLevelItem(i);
-        for (int j = 0; j < group->childCount(); ++j) {
-            auto *item = group->child(j);
-            const QUuid id(item->data(0, Qt::UserRole).toString());
-            if (id == chatA->id() || id == chatB->id()) {
-                QVERIFY(!item->icon(0).isNull());
-                QVERIFY(item->toolTip(0).contains(QStringLiteral("unsent draft")));
-                ++badged;
-            }
-        }
+    for (const QUuid &chatId : {chatA->id(), chatB->id()}) {
+        auto *item = findSessionItem(tree, chatId);
+        QVERIFY(item);
+        QVERIFY(!item->icon(0).isNull());
+        QVERIFY(item->toolTip(0).contains(QStringLiteral("unsent draft")));
+        ++badged;
     }
     QCOMPARE(badged, 2);
 
@@ -994,6 +1024,82 @@ void TestMainWindow::composerDraftSurvivesRestart() {
     auto *composer = restarted.findChild<Composer *>();
     QVERIFY(composer);
     QCOMPARE(composer->text(), QStringLiteral("remember me"));
+}
+
+// Pinning a chat moves it to the "Pinned" section (and out of the date
+// groups); unpinning moves it back. The state persists in the database.
+void TestMainWindow::pinChatMovesItToPinnedSection() {
+    MainWindow window;
+    window.show();
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+
+    window.pinChatForTest(id, true);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("pinned"));
+    QVERIFY(window.sessionForTest(id)->pinned());
+
+    window.pinChatForTest(id, false);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(!window.sessionForTest(id)->pinned());
+}
+
+// A soft-deleted chat can be restored (back to the date tree) and permanently
+// deleted (gone from the tree, the session list and the database).
+void TestMainWindow::restoreAndPermanentDeleteFromDeletedSection() {
+    MainWindow window;
+    window.show();
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+
+    window.requestDeleteSessionsForTest({id});
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("deleted"));
+    QVERIFY(window.sessionForTest(id)->deletedAt().isValid());
+
+    // Restore puts it back into the date-based tree.
+    window.restoreSessionsForTest({id});
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(!window.sessionForTest(id)->deletedAt().isValid());
+
+    // Delete again, then permanently delete (with confirmation).
+    window.requestDeleteSessionsForTest({id});
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("deleted"));
+    clickModalButton(QMessageBox::Yes);
+    window.permanentlyDeleteSessionsForTest({id});
+    QVERIFY(!sidebarHasSession(window, id));
+    QVERIFY(!window.sessionForTest(id));
+}
+
+// Chats that were deleted more than 30 days ago are purged permanently when
+// the app starts: they are gone from the database and never loaded.
+void TestMainWindow::chatsDeletedOver30DaysAgoArePurgedOnStartup() {
+    const QUuid staleId = QUuid::createUuid();
+    const QDateTime oldTime = QDateTime::currentDateTime().addDays(-40);
+    {
+        const QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                               QStringLiteral("/okapi.sqlite");
+        ChatDatabase db;
+        QVERIFY(db.open(dbPath));
+        ChatSession seed(staleId, QStringLiteral("Stale deleted chat"), QStringLiteral("b"));
+        seed.setCreatedAt(oldTime);
+        seed.setLastActivityAt(oldTime);
+        QVERIFY(db.insertSession(seed));
+        QVERIFY(db.setSessionDeletedAt(staleId.toString(QUuid::WithoutBraces),
+                                       QDateTime::currentDateTime().addDays(-31)));
+    }
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    // Purged on startup: neither in memory nor in the sidebar nor in the DB.
+    QVERIFY(!window.sessionForTest(staleId));
+    QVERIFY(!sidebarHasSession(window, staleId));
+    {
+        const QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                               QStringLiteral("/okapi.sqlite");
+        ChatDatabase db;
+        QVERIFY(db.open(dbPath));
+        QVERIFY(!db.sessionIds().contains(staleId.toString(QUuid::WithoutBraces)));
+    }
 }
 
 #include "tst_mainwindow.moc"

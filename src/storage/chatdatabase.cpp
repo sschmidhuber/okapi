@@ -55,18 +55,34 @@ void createTables(QSqlDatabase &database) {
                               "model TEXT, "
                               "created_at INTEGER NOT NULL, "
                               "last_activity_at INTEGER NOT NULL DEFAULT 0, "
-                              "draft TEXT NOT NULL DEFAULT '')"));
-    // Migration for databases created before the draft column existed.
+                              "draft TEXT NOT NULL DEFAULT '', "
+                              "pinned INTEGER NOT NULL DEFAULT 0, "
+                              "deleted_at INTEGER NOT NULL DEFAULT 0)"));
+    // Migration for databases created before the draft/pinned/deleted_at
+    // columns existed.
     QSqlQuery sessionColumns(database);
     if (sessionColumns.exec(QStringLiteral("PRAGMA table_info(sessions)"))) {
         bool hasDraft = false;
+        bool hasPinned = false;
+        bool hasDeletedAt = false;
         while (sessionColumns.next()) {
-            if (sessionColumns.value(1).toString() == QLatin1String("draft"))
+            const QString column = sessionColumns.value(1).toString();
+            if (column == QLatin1String("draft"))
                 hasDraft = true;
+            else if (column == QLatin1String("pinned"))
+                hasPinned = true;
+            else if (column == QLatin1String("deleted_at"))
+                hasDeletedAt = true;
         }
         if (!hasDraft)
             sessionColumns.exec(QStringLiteral("ALTER TABLE sessions ADD COLUMN draft TEXT NOT "
                                                "NULL DEFAULT ''"));
+        if (!hasPinned)
+            sessionColumns.exec(QStringLiteral("ALTER TABLE sessions ADD COLUMN pinned INTEGER "
+                                               "NOT NULL DEFAULT 0"));
+        if (!hasDeletedAt)
+            sessionColumns.exec(QStringLiteral("ALTER TABLE sessions ADD COLUMN deleted_at INTEGER "
+                                               "NOT NULL DEFAULT 0"));
     }
     query.exec(
         QStringLiteral("CREATE TABLE IF NOT EXISTS messages ("
@@ -363,7 +379,7 @@ QVector<StoredSession> ChatDatabase::loadSessions() const {
     QVector<StoredSession> result;
     QSqlQuery query(m_database);
     if (!query.exec(QStringLiteral("SELECT id, title, backend_id, model, created_at, "
-                                   "last_activity_at, draft FROM sessions "
+                                   "last_activity_at, draft, pinned, deleted_at FROM sessions "
                                    "ORDER BY last_activity_at DESC, created_at DESC"))) {
         m_lastError = query.lastError().text();
         return result;
@@ -379,6 +395,10 @@ QVector<StoredSession> ChatDatabase::loadSessions() const {
         session.lastActivityAt =
             lastActivity > 0 ? QDateTime::fromSecsSinceEpoch(lastActivity) : session.createdAt;
         session.draft = query.value(6).toString();
+        session.pinned = query.value(7).toInt() != 0;
+        const qint64 deletedAt = query.value(8).toLongLong();
+        if (deletedAt > 0)
+            session.deletedAt = QDateTime::fromSecsSinceEpoch(deletedAt);
         result.push_back(std::move(session));
     }
     return result;
@@ -391,28 +411,32 @@ bool ChatDatabase::insertSession(const ChatSession &session) {
     const qint64 lastActivity = session.lastActivityAt().isValid()
                                     ? session.lastActivityAt().toSecsSinceEpoch()
                                     : createdAt;
-    return execute(
-        QStringLiteral("INSERT INTO sessions (id, title, backend_id, model, "
-                       "created_at, last_activity_at, draft) VALUES (?, ?, ?, ?, ?, ?, ?) "
-                       "ON CONFLICT (id) DO UPDATE SET title = excluded.title, "
-                       "backend_id = excluded.backend_id, model = excluded.model, "
-                       "created_at = excluded.created_at, "
-                       "last_activity_at = excluded.last_activity_at, "
-                       "draft = excluded.draft"),
-        {
-            session.id().toString(QUuid::WithoutBraces),
-            session.title(),
-            session.backendId(),
-            session.model(),
-            createdAt,
-            lastActivity,
-            session.draft(),
-        });
+    return execute(QStringLiteral("INSERT INTO sessions (id, title, backend_id, model, "
+                                  "created_at, last_activity_at, draft, pinned, deleted_at) "
+                                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                                  "ON CONFLICT (id) DO UPDATE SET title = excluded.title, "
+                                  "backend_id = excluded.backend_id, model = excluded.model, "
+                                  "created_at = excluded.created_at, "
+                                  "last_activity_at = excluded.last_activity_at, "
+                                  "draft = excluded.draft, pinned = excluded.pinned, "
+                                  "deleted_at = excluded.deleted_at"),
+                   {
+                       session.id().toString(QUuid::WithoutBraces),
+                       session.title(),
+                       session.backendId(),
+                       session.model(),
+                       createdAt,
+                       lastActivity,
+                       session.draft(),
+                       session.pinned() ? 1 : 0,
+                       session.deletedAt().isValid() ? session.deletedAt().toSecsSinceEpoch() : 0,
+                   });
 }
 
 bool ChatDatabase::updateSession(const ChatSession &session) {
     return execute(QStringLiteral("UPDATE sessions SET title = ?, backend_id = ?, model = ?, "
-                                  "last_activity_at = ?, draft = ? WHERE id = ?"),
+                                  "last_activity_at = ?, draft = ?, pinned = ?, deleted_at = ? "
+                                  "WHERE id = ?"),
                    {
                        session.title(),
                        session.backendId(),
@@ -421,8 +445,41 @@ bool ChatDatabase::updateSession(const ChatSession &session) {
                            ? session.lastActivityAt().toSecsSinceEpoch()
                            : QDateTime::currentDateTime().toSecsSinceEpoch(),
                        session.draft(),
+                       session.pinned() ? 1 : 0,
+                       session.deletedAt().isValid() ? session.deletedAt().toSecsSinceEpoch() : 0,
                        session.id().toString(QUuid::WithoutBraces),
                    });
+}
+
+bool ChatDatabase::setSessionPinned(const QString &sessionId, bool pinned) {
+    return execute(QStringLiteral("UPDATE sessions SET pinned = ? WHERE id = ?"),
+                   {pinned ? 1 : 0, sessionId});
+}
+
+bool ChatDatabase::setSessionDeletedAt(const QString &sessionId, const QDateTime &deletedAt) {
+    return execute(QStringLiteral("UPDATE sessions SET deleted_at = ? WHERE id = ?"),
+                   {deletedAt.isValid() ? deletedAt.toSecsSinceEpoch() : 0, sessionId});
+}
+
+int ChatDatabase::deleteSessionsDeletedBefore(const QDateTime &cutoff) {
+    QSqlQuery query(m_database);
+    if (!query.prepare(QStringLiteral("SELECT id FROM sessions "
+                                      "WHERE deleted_at > 0 AND deleted_at < ?")))
+        return 0;
+    query.addBindValue(cutoff.toSecsSinceEpoch());
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return 0;
+    }
+    QStringList ids;
+    while (query.next())
+        ids.push_back(query.value(0).toString());
+    int removed = 0;
+    for (const QString &id : ids) {
+        if (deleteSession(id))
+            ++removed;
+    }
+    return removed;
 }
 
 bool ChatDatabase::setSessionDraft(const QString &sessionId, const QString &draft) {

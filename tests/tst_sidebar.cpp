@@ -23,12 +23,31 @@ std::unique_ptr<ChatSession> makeSession(const QString &title, const QDateTime &
 QTreeWidgetItem *groupItem(QTreeWidget *tree, const QDateTime &activity) {
     const QString label = SessionGrouper::groupLabel(
         SessionGrouper::groupKey(activity, QDateTime::currentDateTime()));
+    // Time groups are nested below the "Date" section, so search recursively.
+    const auto items = tree->findItems(label, Qt::MatchExactly | Qt::MatchRecursive, 0);
+    return items.isEmpty() ? nullptr : items.first();
+}
+
+// Top-level section ("Pinned"/"Date"/"Deleted") by its object key stored in
+// the session-id role.
+QTreeWidgetItem *sectionItem(QTreeWidget *tree, const QString &key) {
     for (int i = 0; i < tree->topLevelItemCount(); ++i) {
         auto *item = tree->topLevelItem(i);
-        if (item->text(0) == label)
+        if (item->data(0, Qt::UserRole).toString() == key)
             return item;
     }
     return nullptr;
+}
+
+int countChatItems(QTreeWidget *tree) {
+    int count = 0;
+    const auto items =
+        tree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive, 0);
+    for (const auto *item : items) {
+        if (!item->data(0, Qt::UserRole + 1).toBool())
+            ++count;
+    }
+    return count;
 }
 
 } // namespace
@@ -45,6 +64,8 @@ private slots:
     void sidebarHasNoToolbarButtons();
     void indicatorsBadgeRunningAndUnreadChats();
     void indicatorsBadgeDraftChats();
+    void pinnedAndDeletedSections();
+    void deletableSelectionExcludesDeletedChats();
     void multiSelectionViaCtrlAndShiftClick();
     void selectedGroupExpandsToItsChats();
     void deletableSelectionExcludesRunningAndUnread();
@@ -64,7 +85,11 @@ void TestSidebar::firstBuildExpandsOnlyToday() {
     QVERIFY(tree);
     sidebar.setSessions(sessions);
 
+    // The three top-level sections are always present, in this order.
     QCOMPARE(tree->topLevelItemCount(), 3);
+    QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("Pinned"));
+    QCOMPARE(tree->topLevelItem(1)->text(0), QStringLiteral("Date"));
+    QCOMPARE(tree->topLevelItem(2)->text(0), QStringLiteral("Deleted"));
     auto *todayGroup = groupItem(tree, now);
     auto *yesterdayGroup = groupItem(tree, now.addDays(-1));
     auto *oldGroup = groupItem(tree, now.addDays(-8));
@@ -141,7 +166,7 @@ void TestSidebar::currentSessionIdIsNullForGroupItems() {
     QVERIFY(tree);
     sidebar.setSessions(sessions);
 
-    auto *group = tree->topLevelItem(0);
+    auto *group = groupItem(tree, now);
     QVERIFY(group);
     tree->setCurrentItem(group);
     QVERIFY(sidebar.currentSessionId().isNull());
@@ -166,10 +191,13 @@ void TestSidebar::emptySessionsClearTree() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({today.get()});
-    QCOMPARE(tree->topLevelItemCount(), 1);
+    // The sections stay, the chat is listed under "Date".
+    QCOMPARE(tree->topLevelItemCount(), 3);
+    QCOMPARE(countChatItems(tree), 1);
 
     sidebar.setSessions({});
-    QCOMPARE(tree->topLevelItemCount(), 0);
+    QCOMPARE(tree->topLevelItemCount(), 3);
+    QCOMPARE(countChatItems(tree), 0);
 }
 
 // The running/unread badges: a running chat shows a spinner icon, an
@@ -289,6 +317,74 @@ void TestSidebar::indicatorsBadgeDraftChats() {
     QVERIFY(group);
     for (int i = 0; i < group->childCount(); ++i)
         QVERIFY(group->child(i)->icon(0).isNull());
+}
+
+// The three top-level sections: pinned chats appear under "Pinned" (sorted
+// by last activity, newest first) and NOT in the date groups; deleted chats
+// appear under "Deleted" (sorted by deletion time, newest first) and not in
+// the date groups either. Section headers carry their icons.
+void TestSidebar::pinnedAndDeletedSections() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto pinnedOld = makeSession(QStringLiteral("pinned old"), now.addSecs(-7200));
+    auto pinnedNew = makeSession(QStringLiteral("pinned new"), now);
+    pinnedOld->setPinned(true);
+    pinnedNew->setPinned(true);
+    auto deletedOld = makeSession(QStringLiteral("deleted old"), now.addDays(-5));
+    auto deletedNew = makeSession(QStringLiteral("deleted new"), now.addDays(-1));
+    deletedOld->setDeletedAt(now.addDays(-10));
+    deletedNew->setDeletedAt(now.addDays(-2));
+    auto normal = makeSession(QStringLiteral("normal chat"), now);
+    const QVector<ChatSession *> sessions{pinnedOld.get(), pinnedNew.get(), deletedOld.get(),
+                                          deletedNew.get(), normal.get()};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+
+    auto *pinnedSection = sectionItem(tree, QStringLiteral("pinned"));
+    auto *dateSection = sectionItem(tree, QStringLiteral("date"));
+    auto *deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(pinnedSection && dateSection && deletedSection);
+    QVERIFY(!pinnedSection->icon(0).isNull());
+    QVERIFY(!dateSection->icon(0).isNull());
+    QVERIFY(!deletedSection->icon(0).isNull());
+
+    // Pinned: newest activity first, and only pinned chats.
+    QCOMPARE(pinnedSection->childCount(), 2);
+    QCOMPARE(pinnedSection->child(0)->text(0), QStringLiteral("pinned new"));
+    QCOMPARE(pinnedSection->child(1)->text(0), QStringLiteral("pinned old"));
+
+    // Deleted: newest deletion first.
+    QCOMPARE(deletedSection->childCount(), 2);
+    QCOMPARE(deletedSection->child(0)->text(0), QStringLiteral("deleted new"));
+    QCOMPARE(deletedSection->child(1)->text(0), QStringLiteral("deleted old"));
+
+    // Only the normal chat is in the date-based groups.
+    auto *todayGroup = groupItem(tree, now);
+    QVERIFY(todayGroup);
+    QCOMPARE(todayGroup->childCount(), 1);
+    QCOMPARE(todayGroup->child(0)->text(0), QStringLiteral("normal chat"));
+    QCOMPARE(countChatItems(tree), 5);
+}
+
+// Chats in the "Deleted" section are not offered for another (soft) delete.
+void TestSidebar::deletableSelectionExcludesDeletedChats() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto deleted = makeSession(QStringLiteral("deleted chat"), now);
+    deleted->setDeletedAt(now.addDays(-1));
+    auto plain = makeSession(QStringLiteral("plain chat"), now);
+    const QVector<ChatSession *> sessions{deleted.get(), plain.get()};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+
+    tree->selectAll();
+    const QList<QUuid> deletable = sidebar.deletableSelectedSessionIds();
+    QCOMPARE(deletable.size(), 1);
+    QCOMPARE(deletable.first(), plain->id());
 }
 
 // Ctrl+click adds to the selection, Shift+click selects a range, and a
@@ -441,8 +537,9 @@ void TestSidebar::selectSessionClearsMultiSelection() {
     sidebar.setSessions(sessions);
 
     tree->selectAll();
-    // 3 chats plus the group header.
-    QCOMPARE(tree->selectedItems().size(), 4);
+    // 3 chats plus the section headers (Pinned, Date, Deleted) and the
+    // time group below "Date".
+    QCOMPARE(tree->selectedItems().size(), 7);
 
     sidebar.selectSession(s1->id());
     QCOMPARE(tree->selectedItems().size(), 1);
