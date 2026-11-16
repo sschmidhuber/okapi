@@ -118,8 +118,9 @@ private:
     [[nodiscard]] QIcon spinnerIcon() const;
     [[nodiscard]] QIcon unreadDotIcon() const;
     [[nodiscard]] static QIcon draftIcon();
-    [[nodiscard]] static QTreeWidgetItem *makeChatItem(QTreeWidgetItem *parent,
-                                                       const ChatSession *session);
+    // Creates the chat's tree item under parent (owned by the tree, so the
+    // return value may be ignored).
+    static QTreeWidgetItem *makeChatItem(QTreeWidgetItem *parent, const ChatSession *session);
     void collectChatIds(const QTreeWidgetItem *item, QSet<QUuid> &ids) const;
     [[nodiscard]] QList<QUuid> selectedDeletedSessionIds(const QTreeWidgetItem *clicked) const;
     // Context menu at the given viewport position; the populate* helpers fill
