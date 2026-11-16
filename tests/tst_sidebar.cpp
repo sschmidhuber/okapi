@@ -117,34 +117,45 @@ QAction *triggerContextMenuAction(QWidget *sidebar, QTreeWidget *tree, QTreeWidg
     return triggered;
 }
 
-// Finds the action at the given path in the context menu opened at item
-// without triggering it (for inspecting enabled state etc.).
-QAction *contextMenuAction(QWidget *sidebar, QTreeWidget *tree, QTreeWidgetItem *item,
-                           const QStringList &path) {
-    QAction *found = nullptr;
-    QTimer::singleShot(0, [sidebar, &found, path]() {
+// Opens the context menu at item and looks up the action at the given path
+// (e.g. {"Move to topic", "Research"}). Returns whether the action exists;
+// when enabledOut is given, it receives the action's enabled state. The
+// state is read while the menu is still open (the QMenu is stack-allocated
+// in showContextMenu, so the action pointer would dangle afterwards).
+bool contextMenuAction(QWidget *sidebar, QTreeWidget *tree, QTreeWidgetItem *item,
+                       const QStringList &path, bool *enabledOut = nullptr) {
+    bool found = false;
+    bool actionEnabled = false;
+    QTimer::singleShot(0, [sidebar, &found, &actionEnabled, path]() {
         auto *menu = sidebar->findChild<QMenu *>();
         if (!menu)
             return;
         QMenu *current = menu;
+        QAction *action = nullptr;
         for (const QString &text : path) {
-            found = nullptr;
+            action = nullptr;
             const auto actions = current->actions();
             for (auto *a : actions) {
                 if (a->text() == text) {
-                    found = a;
+                    action = a;
                     break;
                 }
             }
-            if (!found)
+            if (!action)
                 break;
-            if (found->menu())
-                current = found->menu();
+            if (action->menu())
+                current = action->menu();
+        }
+        if (action) {
+            found = true;
+            actionEnabled = action->isEnabled();
         }
         // Dismiss the menu without picking anything (close() ends exec()).
         menu->close();
     });
     emit tree->customContextMenuRequested(tree->visualItemRect(item).center());
+    if (enabledOut)
+        *enabledOut = actionEnabled;
     return found;
 }
 
@@ -781,14 +792,16 @@ void TestSidebar::moveToTopicSubmenuListsTopicsAndDisablesCurrent() {
     auto *item = chatItem(tree, chat->id());
     QVERIFY(item);
 
-    QAction *current = contextMenuAction(
-        &sidebar, tree, item, {QStringLiteral("Move to topic"), QStringLiteral("Research")});
-    QVERIFY(current);
-    QVERIFY(!current->isEnabled());
-    QAction *other = contextMenuAction(&sidebar, tree, item,
-                                       {QStringLiteral("Move to topic"), QStringLiteral("Work")});
-    QVERIFY(other);
-    QVERIFY(other->isEnabled());
+    bool currentEnabled = true;
+    QVERIFY(contextMenuAction(&sidebar, tree, item,
+                              {QStringLiteral("Move to topic"), QStringLiteral("Research")},
+                              &currentEnabled));
+    QVERIFY(!currentEnabled); // the chat's current topic is disabled
+    bool otherEnabled = false;
+    QVERIFY(contextMenuAction(&sidebar, tree, item,
+                              {QStringLiteral("Move to topic"), QStringLiteral("Work")},
+                              &otherEnabled));
+    QVERIFY(otherEnabled);
 }
 
 // Drag&drop: dropping a chat onto a topic/section emits sessionsDropped with
