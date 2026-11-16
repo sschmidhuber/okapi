@@ -116,6 +116,21 @@ public:
     void permanentlyDeleteSessionsForTest(const QList<QUuid> &ids) {
         onSessionPermanentDeleteRequested(ids);
     }
+    void renameSessionForTest(const QUuid &id, const QString &title) { renameSession(id, title); }
+    void moveSessionToTopicForTest(const QUuid &id, const QString &topicId) {
+        moveSessionToTopic(id, topicId);
+    }
+    void removeSessionFromTopicForTest(const QUuid &id) { moveSessionToTopic(id, QString()); }
+    void dropSessionsForTest(const QList<QUuid> &ids, const QString &section,
+                             const QString &topicId = {}) {
+        onSessionsDropped(ids, section, topicId);
+    }
+    QString createTopicForTest(const QString &name) { return createTopic(name); }
+    void renameTopicForTest(const QString &topicId, const QString &name) {
+        renameTopic(topicId, name);
+    }
+    void deleteTopicForTest(const QString &topicId) { deleteTopic(topicId); }
+    [[nodiscard]] QVector<StoredTopic> topicsForTest() const { return m_topics; }
     void markUnreadForTest(const QUuid &id) { m_unreadSessions.insert(id); }
     [[nodiscard]] ChatSession *sessionForTest(const QUuid &id) const;
     void selectSessionForTest(const QUuid &id) { onSessionSelected(id); }
@@ -161,10 +176,11 @@ private slots:
     void confirmPromptMenu(int row = -1);
     void closePromptMenu();
     // Soft-deletes the given chats (moves them to the sidebar's "Deleted"
-    // section); asks for confirmation when there are several. Running and
-    // unread chats are never deleted.
+    // section) without a confirmation dialog, even when there are several.
+    // Running and unread chats are never deleted.
     void onSessionDeleteRequested(const QList<QUuid> &ids);
-    // Pins/unpins one chat (sidebar context menu).
+    // Pins/unpins one chat (sidebar context menu). Pinning clears the
+    // chat's topic (pin and topic are mutually exclusive).
     void onSessionPinToggled(const QUuid &id, bool pin);
     // Restores soft-deleted chats from the "Deleted" section back into the
     // date-based tree.
@@ -172,6 +188,20 @@ private slots:
     // Permanently removes chats from the "Deleted" section (with
     // confirmation), including their messages.
     void onSessionPermanentDeleteRequested(const QList<QUuid> &ids);
+    // Renames one chat: asks for the new title (context menu "Rename") and
+    // applies it.
+    void onSessionRenameRequested(const QUuid &id);
+    // Moves one chat into a topic ("Move to topic" submenu) or out of its
+    // topic (empty topicId, "Remove from topic").
+    void onSessionMoveToTopicRequested(const QUuid &id, const QString &topicId);
+    void onSessionRemoveFromTopicRequested(const QUuid &id);
+    // Applies a drag&drop move of chats onto a sidebar section ("pinned",
+    // "date", "deleted", "topics") or a specific topic (topicId set).
+    void onSessionsDropped(const QList<QUuid> &ids, const QString &section, const QString &topicId);
+    // Topic management (sidebar context menus on "Topic"/a topic).
+    void onTopicCreateRequested();
+    void onTopicRenameRequested(const QString &topicId);
+    void onTopicDeleteRequested(const QString &topicId);
     // Selects the next (direction 1) or previous (direction -1) chat of the
     // history in the sidebar's order, wrapping around at both ends.
     void cycleChat(int direction);
@@ -222,6 +252,16 @@ private:
     void createSession(const QString &backendId = {}, const QString &model = {});
     // Moves a chat to the "Deleted" section (keeps it restorable).
     void softDeleteSession(const QUuid &id);
+    // Applies a rename to a session and persists it (also used by tests).
+    void renameSession(const QUuid &id, const QString &title);
+    // Assigns a chat to a topic (empty topicId removes it from its topic);
+    // moving into a topic clears the pin (mutually exclusive).
+    void moveSessionToTopic(const QUuid &id, const QString &topicId);
+    // Creates/renames/deletes a topic (context menus; the ForTest wrappers
+    // above drive the same code paths). Returns the new topic's id.
+    QString createTopic(const QString &name);
+    void renameTopic(const QString &topicId, const QString &name);
+    void deleteTopic(const QString &topicId);
     // Removes a chat completely (messages included) and cancels its turn.
     void deleteSession(const QUuid &id);
     // After the current chat was deleted/removed: selects the first
@@ -347,6 +387,9 @@ private:
     McpManager m_mcpManager;
     ChatDatabase m_database;
     QVector<ChatSession *> m_sessions;
+    // User-created topics (sidebar "Topic" section), mirrored in the
+    // topics table.
+    QVector<StoredTopic> m_topics;
     ChatSession *m_currentSession = nullptr;
     // One in-flight model turn per chat, keyed by session id: chats run in
     // parallel and switching chats never interrupts a running one.

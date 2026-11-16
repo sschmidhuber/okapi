@@ -56,7 +56,7 @@ add_executable(tst_sidebar tst_sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp)
 target_include_directories(tst_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_sidebar PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::Svg)
-foreach(sidebar_icon edit-entry-symbolic pin-symbolic date-symbolic delete-symbolic-sidebar)
+foreach(sidebar_icon edit-entry-symbolic pin-symbolic date-symbolic delete-symbolic-sidebar document-open-folder-symbolic)
     set_source_files_properties(${CMAKE_SOURCE_DIR}/resources/icons/${sidebar_icon}.svg
         PROPERTIES QT_RESOURCE_ALIAS "resources/icons/${sidebar_icon}.svg")
 endforeach()
@@ -66,7 +66,8 @@ qt_add_resources(tst_sidebar "tst_sidebar_resources"
         ${CMAKE_SOURCE_DIR}/resources/icons/edit-entry-symbolic.svg
         ${CMAKE_SOURCE_DIR}/resources/icons/pin-symbolic.svg
         ${CMAKE_SOURCE_DIR}/resources/icons/date-symbolic.svg
-        ${CMAKE_SOURCE_DIR}/resources/icons/delete-symbolic-sidebar.svg)
+        ${CMAKE_SOURCE_DIR}/resources/icons/delete-symbolic-sidebar.svg
+        ${CMAKE_SOURCE_DIR}/resources/icons/document-open-folder-symbolic.svg)
 add_test(NAME tst_sidebar COMMAND tst_sidebar)
 
 # The chat view (and its delegate) also live in the application target; the
@@ -129,7 +130,7 @@ target_include_directories(tst_mainwindow PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_mainwindow PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::WebEngineWidgets Qt6::WebChannel Qt6::Svg)
 # The sidebar's badges and section icons use the bundled SVGs; embed them so
 # the icons are not null in the test binary.
-foreach(sidebar_icon edit-entry-symbolic pin-symbolic date-symbolic delete-symbolic-sidebar)
+foreach(sidebar_icon edit-entry-symbolic pin-symbolic date-symbolic delete-symbolic-sidebar document-open-folder-symbolic)
     set_source_files_properties(${CMAKE_SOURCE_DIR}/resources/icons/${sidebar_icon}.svg
         PROPERTIES QT_RESOURCE_ALIAS "resources/icons/${sidebar_icon}.svg")
 endforeach()
@@ -139,7 +140,8 @@ qt_add_resources(tst_mainwindow "tst_mainwindow_resources"
         ${CMAKE_SOURCE_DIR}/resources/icons/edit-entry-symbolic.svg
         ${CMAKE_SOURCE_DIR}/resources/icons/pin-symbolic.svg
         ${CMAKE_SOURCE_DIR}/resources/icons/date-symbolic.svg
-        ${CMAKE_SOURCE_DIR}/resources/icons/delete-symbolic-sidebar.svg)
+        ${CMAKE_SOURCE_DIR}/resources/icons/delete-symbolic-sidebar.svg
+        ${CMAKE_SOURCE_DIR}/resources/icons/document-open-folder-symbolic.svg)
 add_test(NAME tst_mainwindow COMMAND tst_mainwindow)
 
 # The settings dialog shows themed icons with bundled SVGs from the app's

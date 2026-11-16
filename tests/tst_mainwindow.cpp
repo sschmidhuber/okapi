@@ -60,8 +60,8 @@ bool sidebarHasSession(MainWindow &window, const QUuid &id) {
     return tree && findSessionItem(tree, id) != nullptr;
 }
 
-// The sidebar section ("pinned"/"date"/"deleted") the session is currently
-// listed in, or empty when the chat is not in the tree at all.
+// The sidebar section ("pinned"/"date"/"topics"/"deleted") the session is
+// currently listed in, or empty when the chat is not in the tree at all.
 QString sidebarSectionOf(MainWindow &window, const QUuid &id) {
     auto *tree = window.findChild<QTreeWidget *>();
     if (!tree)
@@ -75,6 +75,45 @@ QString sidebarSectionOf(MainWindow &window, const QUuid &id) {
             return section;
     }
     return {};
+}
+
+// The topic the session is currently listed under in the sidebar's "Topic"
+// section (empty when the chat is not in a topic).
+QString sidebarTopicOf(MainWindow &window, const QUuid &id) {
+    auto *tree = window.findChild<QTreeWidget *>();
+    if (!tree)
+        return {};
+    const auto *item = findSessionItem(tree, id);
+    if (!item)
+        return {};
+    for (const auto *p = item->parent(); p; p = p->parent()) {
+        const QString topic = p->data(0, Qt::UserRole + 4).toString();
+        if (!topic.isEmpty())
+            return topic;
+    }
+    return {};
+}
+
+// A top-level sidebar section by its key ("pinned"/"date"/"topics"/"deleted").
+QTreeWidgetItem *sectionItem(QTreeWidget *tree, const QString &key) {
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+        auto *item = tree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == key)
+            return item;
+    }
+    return nullptr;
+}
+
+// A topic item under the "Topic" section, by its topic id.
+QTreeWidgetItem *topicItem(QTreeWidget *tree, const QString &topicId) {
+    const auto items =
+        tree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive, 0);
+    for (auto *item : items) {
+        if (item->data(0, Qt::UserRole + 1).toBool() &&
+            item->data(0, Qt::UserRole + 4).toString() == topicId)
+            return item;
+    }
+    return nullptr;
 }
 
 // Clicks the given button of the modal confirmation dialog that
@@ -111,8 +150,7 @@ private slots:
     void f9TogglesSidebar();
     void ctrlTabCyclesChats();
     void deleteSingleChatWithoutConfirmation();
-    void deleteMultipleChatsAsksAndDeletesOnYes();
-    void deleteMultipleChatsKeepsAllOnNo();
+    void deleteMultipleChatsWithoutConfirmation();
     void unreadChatIsNotDeleted();
     void statusBarShowsReadyAfterStreamFinishes();
     void followUpQueuedWhileStreaming();
@@ -129,6 +167,13 @@ private slots:
     void pinChatMovesItToPinnedSection();
     void restoreAndPermanentDeleteFromDeletedSection();
     void chatsDeletedOver30DaysAgoArePurgedOnStartup();
+    void topicCreateRenameDeleteInSidebar();
+    void topicAssignmentIsPersisted();
+    void moveChatToTopicAndRemoveFromTopic();
+    void pinAndTopicAreMutuallyExclusive();
+    void renameChatUpdatesSidebar();
+    void dragAndDropMovesChatsBetweenSectionsAndTopics();
+    void deletedSectionNotExpandedAfterDelete();
 
 private:
     QTemporaryDir m_home;
@@ -521,9 +566,10 @@ void TestMainWindow::deleteSingleChatWithoutConfirmation() {
     QCOMPARE(window.currentSession()->id(), initial);
 }
 
-// Deleting several chats asks "Do you really want to delete x chats?" and
-// removes them all when confirmed.
-void TestMainWindow::deleteMultipleChatsAsksAndDeletesOnYes() {
+// Deleting several chats at once no longer shows a confirmation dialog:
+// they all move to "Deleted" immediately (if a modal dialog were opened,
+// this synchronous call would block on it and the test would hang).
+void TestMainWindow::deleteMultipleChatsWithoutConfirmation() {
     MainWindow window;
     window.show();
     const QUuid s0 = window.currentSession()->id();
@@ -535,7 +581,6 @@ void TestMainWindow::deleteMultipleChatsAsksAndDeletesOnYes() {
     QVERIFY(sidebarHasSession(window, s1));
     QVERIFY(sidebarHasSession(window, s2));
 
-    clickModalButton(QMessageBox::Yes);
     window.requestDeleteSessionsForTest({s0, s1, s2});
     QCOMPARE(sidebarSectionOf(window, s0), QStringLiteral("deleted"));
     QCOMPARE(sidebarSectionOf(window, s1), QStringLiteral("deleted"));
@@ -544,20 +589,6 @@ void TestMainWindow::deleteMultipleChatsAsksAndDeletesOnYes() {
     QVERIFY(window.currentSession()->id() != s0);
     QVERIFY(window.currentSession()->id() != s1);
     QVERIFY(window.currentSession()->id() != s2);
-}
-
-// Answering "No" to the multi-delete confirmation keeps all chats.
-void TestMainWindow::deleteMultipleChatsKeepsAllOnNo() {
-    MainWindow window;
-    window.show();
-    const QUuid s0 = window.currentSession()->id();
-    window.startNewChat();
-    const QUuid s1 = window.currentSession()->id();
-
-    clickModalButton(QMessageBox::No);
-    window.requestDeleteSessionsForTest({s0, s1});
-    QCOMPARE(sidebarSectionOf(window, s0), QStringLiteral("date"));
-    QCOMPARE(sidebarSectionOf(window, s1), QStringLiteral("date"));
 }
 
 // Unread chats are never deleted: the unread one is filtered out before the
@@ -1100,6 +1131,208 @@ void TestMainWindow::chatsDeletedOver30DaysAgoArePurgedOnStartup() {
         QVERIFY(db.open(dbPath));
         QVERIFY(!db.sessionIds().contains(staleId.toString(QUuid::WithoutBraces)));
     }
+}
+
+// Topics can be created, renamed and deleted; the sidebar's "Topic" section
+// mirrors them. Deleting a topic moves its chats back to the date tree (the
+// chats themselves are not deleted).
+void TestMainWindow::topicCreateRenameDeleteInSidebar() {
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+    auto *tree = window.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    QVERIFY(sectionItem(tree, QStringLiteral("topics")));
+
+    const QString topicId = window.createTopicForTest(QStringLiteral("Research"));
+    QVERIFY(!topicId.isEmpty());
+    QCOMPARE(window.topicsForTest().size(), 1);
+    auto *topic = topicItem(tree, topicId);
+    QVERIFY(topic);
+    QCOMPARE(topic->text(0), QStringLiteral("Research"));
+
+    window.moveSessionToTopicForTest(id, topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+    QCOMPARE(sidebarTopicOf(window, id), topicId);
+
+    window.renameTopicForTest(topicId, QStringLiteral("Science"));
+    QCOMPARE(window.topicsForTest().first().name, QStringLiteral("Science"));
+    topic = topicItem(tree, topicId);
+    QVERIFY(topic);
+    QCOMPARE(topic->text(0), QStringLiteral("Science"));
+
+    // Deleting the topic keeps the chat but moves it back to the date tree.
+    window.deleteTopicForTest(topicId);
+    QVERIFY(window.topicsForTest().isEmpty());
+    QVERIFY(!topicItem(tree, topicId));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(sidebarHasSession(window, id));
+    QVERIFY(window.sessionForTest(id)->topicId().isEmpty());
+}
+
+// A topic assignment survives a restart: it is persisted in the database and
+// loaded back into the sidebar.
+void TestMainWindow::topicAssignmentIsPersisted() {
+    const QUuid id = QUuid::createUuid();
+    const QString topicId = QStringLiteral("topic-persist-1");
+    const QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                           QStringLiteral("/okapi.sqlite");
+    {
+        ChatDatabase db;
+        QVERIFY(db.open(dbPath));
+        ChatSession seed(id, QStringLiteral("Seed chat"), QStringLiteral("b"));
+        QVERIFY(db.insertSession(seed));
+        QVERIFY(db.insertTopic(topicId, QStringLiteral("Research")));
+    }
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    // The topic and the session were loaded from the database (other tests
+    // share the same database file, so assert on the specific topic id).
+    bool topicLoaded = false;
+    for (const auto &topic : window.topicsForTest()) {
+        if (topic.id == topicId) {
+            topicLoaded = true;
+            QCOMPARE(topic.name, QStringLiteral("Research"));
+        }
+    }
+    QVERIFY(topicLoaded);
+    QVERIFY(window.sessionForTest(id));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(sidebarTopicOf(window, id).isEmpty());
+
+    window.moveSessionToTopicForTest(id, topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+    QCOMPARE(sidebarTopicOf(window, id), topicId);
+    {
+        ChatDatabase db;
+        QVERIFY(db.open(dbPath));
+        QCOMPARE(db.queryScalar(QStringLiteral("SELECT topic_id FROM sessions WHERE id = '%1'")
+                                    .arg(id.toString(QUuid::WithoutBraces)))
+                     .toString(),
+                 topicId);
+    }
+}
+
+// "Move to topic" puts the chat under the topic; "Remove from topic" puts it
+// back into the date tree.
+void TestMainWindow::moveChatToTopicAndRemoveFromTopic() {
+    MainWindow window;
+    window.show();
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+    const QString topicId = window.createTopicForTest(QStringLiteral("Research"));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+
+    window.moveSessionToTopicForTest(id, topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+    QCOMPARE(sidebarTopicOf(window, id), topicId);
+    QCOMPARE(window.sessionForTest(id)->topicId(), topicId);
+
+    window.removeSessionFromTopicForTest(id);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(sidebarTopicOf(window, id).isEmpty());
+    QVERIFY(window.sessionForTest(id)->topicId().isEmpty());
+}
+
+// Pin and topic are mutually exclusive: pinning a chat in a topic moves it
+// to "Pinned"; moving a pinned chat into a topic unpins it.
+void TestMainWindow::pinAndTopicAreMutuallyExclusive() {
+    MainWindow window;
+    window.show();
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+    const QString topicId = window.createTopicForTest(QStringLiteral("Research"));
+
+    window.moveSessionToTopicForTest(id, topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+
+    window.pinChatForTest(id, true);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("pinned"));
+    QVERIFY(window.sessionForTest(id)->topicId().isEmpty());
+    QVERIFY(window.sessionForTest(id)->pinned());
+
+    window.moveSessionToTopicForTest(id, topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+    QCOMPARE(sidebarTopicOf(window, id), topicId);
+    QVERIFY(!window.sessionForTest(id)->pinned());
+}
+
+// Renaming a chat (context menu "Rename") updates the session and the
+// sidebar item.
+void TestMainWindow::renameChatUpdatesSidebar() {
+    MainWindow window;
+    window.show();
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+
+    window.renameSessionForTest(id, QStringLiteral("My renamed chat"));
+    QCOMPARE(window.sessionForTest(id)->title(), QStringLiteral("My renamed chat"));
+    auto *tree = window.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    auto *item = findSessionItem(tree, id);
+    QVERIFY(item);
+    QCOMPARE(item->text(0), QStringLiteral("My renamed chat"));
+}
+
+// Drag&drop moves chats between the top-level sections and topics: onto a
+// topic ("topics" + topic id), "Pinned", "Date", the "Topic" header (leave
+// the topic) and "Deleted" (soft delete); dragging out of "Deleted"
+// restores the chat into the target.
+void TestMainWindow::dragAndDropMovesChatsBetweenSectionsAndTopics() {
+    MainWindow window;
+    window.show();
+    window.startNewChat();
+    const QUuid id = window.currentSession()->id();
+    const QString topicId = window.createTopicForTest(QStringLiteral("Research"));
+
+    window.dropSessionsForTest({id}, QStringLiteral("topics"), topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+    QCOMPARE(sidebarTopicOf(window, id), topicId);
+
+    window.dropSessionsForTest({id}, QStringLiteral("pinned"));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("pinned"));
+    QVERIFY(sidebarTopicOf(window, id).isEmpty());
+    QVERIFY(window.sessionForTest(id)->pinned());
+
+    window.dropSessionsForTest({id}, QStringLiteral("date"));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(!window.sessionForTest(id)->pinned());
+
+    window.dropSessionsForTest({id}, QStringLiteral("topics"));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("date"));
+    QVERIFY(sidebarTopicOf(window, id).isEmpty());
+
+    window.dropSessionsForTest({id}, QStringLiteral("deleted"));
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("deleted"));
+    QVERIFY(window.sessionForTest(id)->deletedAt().isValid());
+
+    // Dragging the deleted chat onto a topic restores it into that topic.
+    window.dropSessionsForTest({id}, QStringLiteral("topics"), topicId);
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("topics"));
+    QCOMPARE(sidebarTopicOf(window, id), topicId);
+    QVERIFY(!window.sessionForTest(id)->deletedAt().isValid());
+}
+
+// Deleting a chat does not expand the "Deleted" section automatically.
+void TestMainWindow::deletedSectionNotExpandedAfterDelete() {
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const QUuid id = window.currentSession()->id();
+    auto *tree = window.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    auto *deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(deletedSection);
+    QVERIFY(!deletedSection->isExpanded());
+
+    window.requestDeleteSessionsForTest({id});
+    QCOMPARE(sidebarSectionOf(window, id), QStringLiteral("deleted"));
+    deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(deletedSection);
+    QVERIFY(!deletedSection->isExpanded());
 }
 
 #include "tst_mainwindow.moc"

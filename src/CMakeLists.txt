@@ -197,6 +197,7 @@ qt_add_resources(okapi "okapi_resources"
         ../resources/icons/pin-symbolic.svg
         ../resources/icons/date-symbolic.svg
         ../resources/icons/delete-symbolic-sidebar.svg
+        ../resources/icons/document-open-folder-symbolic.svg
         ../resources/icons/settings-configure-symbolic.svg
         ../resources/icons/ai_chip.svg
         ../resources/icons/tools.svg
