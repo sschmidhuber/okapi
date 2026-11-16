@@ -869,7 +869,7 @@ void MainWindow::onTopicCreateRequested() {
 
 QString MainWindow::createTopic(const QString &name) {
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    m_topics.push_back(StoredTopic{id, name});
+    m_topics.push_back(StoredTopic{.id = id, .name = name});
     if (m_database.isOpen())
         m_database.insertTopic(id, name);
     refreshSidebar();

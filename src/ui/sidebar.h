@@ -2,6 +2,7 @@
 
 #include "storage/chatdatabase.h"
 
+#include <QHash>
 #include <QList>
 #include <QSet>
 #include <QUuid>
@@ -99,6 +100,18 @@ signals:
 
 private:
     void rebuildTree();
+    // Tree-build helpers (kept out of rebuildTree() to stay readable).
+    [[nodiscard]] QStringList collectExpandedKeys() const;
+    void partitionSessions(QVector<ChatSession *> &pinned, QVector<ChatSession *> &deleted,
+                           QVector<ChatSession *> &dated,
+                           QHash<QString, QVector<ChatSession *>> &byTopic) const;
+    [[nodiscard]] QTreeWidgetItem *makeSection(const QString &key, const QString &label,
+                                               const QString &iconPath, bool expanded);
+    static void buildDateSection(QTreeWidgetItem *section, const QVector<ChatSession *> &dated,
+                                 bool firstBuild, const QStringList &expandedKeys);
+    void buildTopicsSection(QTreeWidgetItem *section,
+                            const QHash<QString, QVector<ChatSession *>> &byTopic, bool firstBuild,
+                            const QStringList &expandedKeys);
     void applyIndicators();
     void advanceSpinner();
     void requestDeleteSelected();
@@ -109,8 +122,14 @@ private:
                                                        const ChatSession *session);
     void collectChatIds(const QTreeWidgetItem *item, QSet<QUuid> &ids) const;
     [[nodiscard]] QList<QUuid> selectedDeletedSessionIds(const QTreeWidgetItem *clicked) const;
-    // Context menu at the given viewport position.
+    // Context menu at the given viewport position; the populate* helpers fill
+    // the menu and connect each action to its signal directly.
     void showContextMenu(const QPoint &pos);
+    void populateChatMenu(QMenu &menu, const QTreeWidgetItem *item, const QString &section);
+    void populateTopicMenu(QMenu &menu, const QString &topicId);
+    void populateTopicsHeaderMenu(QMenu &menu);
+    void populateDeletedHeaderMenu(QMenu &menu, const QTreeWidgetItem *item);
+    void populateSectionMenu(QMenu &menu);
     // Adds the "Move to topic" submenu (one entry per available topic).
     void addMoveToTopicSubmenu(QMenu *menu, const QUuid &chatId, const QString &currentTopicId);
 

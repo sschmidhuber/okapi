@@ -514,8 +514,9 @@ void TestSidebar::topicsSectionListsChatsUnderTheirTopic() {
     pinned->setPinned(true);
     auto plain = makeSession(QStringLiteral("plain chat"), now);
     const QVector<ChatSession *> sessions{inTopic.get(), pinned.get(), plain.get()};
-    const QVector<StoredTopic> topics{{QStringLiteral("t1"), QStringLiteral("Research")},
-                                      {QStringLiteral("t2"), QStringLiteral("Work")}};
+    const QVector<StoredTopic> topics{
+        StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")},
+        StoredTopic{.id = QStringLiteral("t2"), .name = QStringLiteral("Work")}};
 
     Sidebar sidebar;
     auto *tree = sidebar.findChild<QTreeWidget *>();
@@ -588,7 +589,8 @@ void TestSidebar::contextMenuTopicHeaderCreatesTopic() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({});
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")}});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
 
     auto *topicsSection = sectionItem(tree, QStringLiteral("topics"));
     QVERIFY(topicsSection);
@@ -606,7 +608,8 @@ void TestSidebar::contextMenuTopicItemRenamesAndDeletes() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({});
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")}});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
 
     auto *t1 = topicItem(tree, QStringLiteral("t1"));
     QVERIFY(t1);
@@ -639,8 +642,8 @@ void TestSidebar::contextMenuChatInTopic() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({chat.get()});
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")},
-                       StoredTopic{QStringLiteral("t2"), QStringLiteral("Work")}});
+    sidebar.setTopics({StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")},
+                       StoredTopic{.id = QStringLiteral("t2"), .name = QStringLiteral("Work")}});
     auto *t1 = topicItem(tree, QStringLiteral("t1"));
     QVERIFY(t1);
     t1->setExpanded(true);
@@ -690,7 +693,8 @@ void TestSidebar::contextMenuChatInDateAndPinnedHasRenameAndMoveToTopic() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({dated.get(), pinned.get()});
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")}});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
 
     auto *dateItem = chatItem(tree, dated->id());
     QVERIFY(dateItem);
@@ -727,7 +731,8 @@ void TestSidebar::contextMenuChatInDeleted() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({chat.get()});
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")}});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
     auto *deletedSection = sectionItem(tree, QStringLiteral("deleted"));
     QVERIFY(deletedSection);
     deletedSection->setExpanded(true);
@@ -768,8 +773,8 @@ void TestSidebar::moveToTopicSubmenuListsTopicsAndDisablesCurrent() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({chat.get()});
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")},
-                       StoredTopic{QStringLiteral("t2"), QStringLiteral("Work")}});
+    sidebar.setTopics({StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")},
+                       StoredTopic{.id = QStringLiteral("t2"), .name = QStringLiteral("Work")}});
     auto *t1 = topicItem(tree, QStringLiteral("t1"));
     QVERIFY(t1);
     t1->setExpanded(true);
@@ -799,7 +804,8 @@ void TestSidebar::dropChatOntoSectionsAndTopics() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions(sessions);
-    sidebar.setTopics({StoredTopic{QStringLiteral("t1"), QStringLiteral("Research")}});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
     auto *item = chatItem(tree, chat->id());
     QVERIFY(item);
     auto *t1 = topicItem(tree, QStringLiteral("t1"));

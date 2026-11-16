@@ -152,7 +152,11 @@ Sidebar::Sidebar(QWidget *parent) : QWidget(parent), m_tree(new QTreeWidget(this
 
 bool Sidebar::eventFilter(QObject *watched, QEvent *event) {
     if (watched == m_tree->viewport() && event->type() == QEvent::Drop) {
-        auto *drop = static_cast<QDropEvent *>(event);
+        auto *drop = dynamic_cast<QDropEvent *>(event);
+        if (!drop) {
+            event->ignore();
+            return true;
+        }
         auto *target = m_tree->itemAt(drop->position().toPoint());
         // Dropping onto a chat drops into its container group.
         if (target && !target->data(0, kIsGroupRole).toBool())
@@ -191,39 +195,43 @@ void Sidebar::setTopics(const QVector<StoredTopic> &topics) {
     rebuildTree();
 }
 
-void Sidebar::rebuildTree() {
-    const QUuid current = currentSessionId();
-    const bool firstBuild = m_tree->topLevelItemCount() == 0;
-    // Remember which group items were expanded so a rebuild keeps the state.
+QStringList Sidebar::collectExpandedKeys() const {
+    // Remembers which group items were expanded so a rebuild keeps the state.
     QStringList expandedKeys;
-    const std::function<void(QTreeWidgetItem *)> collectExpanded = [&](QTreeWidgetItem *item) {
-        if (item->data(0, kIsGroupRole).toBool() && item->isExpanded())
-            expandedKeys.push_back(item->data(0, kSessionIdRole).toString());
-        for (int i = 0; i < item->childCount(); ++i)
-            collectExpanded(item->child(i));
-    };
+    const std::function<void(const QTreeWidgetItem *)> collectExpanded =
+        [&](const QTreeWidgetItem *item) {
+            if (item->data(0, kIsGroupRole).toBool() && item->isExpanded())
+                expandedKeys.push_back(item->data(0, kSessionIdRole).toString());
+            for (int i = 0; i < item->childCount(); ++i)
+                collectExpanded(item->child(i));
+        };
     for (int i = 0; i < m_tree->topLevelItemCount(); ++i)
         collectExpanded(m_tree->topLevelItem(i));
+    return expandedKeys;
+}
 
-    // Partition: deleted chats only appear under "Deleted", chats in a
-    // topic only under that topic, pinned chats only under "Pinned" (never
-    // in the date-based groups).
+void Sidebar::partitionSessions(QVector<ChatSession *> &pinned, QVector<ChatSession *> &deleted,
+                                QVector<ChatSession *> &dated,
+                                QHash<QString, QVector<ChatSession *>> &byTopic) const {
+    // Deleted chats only appear under "Deleted", chats in a topic only under
+    // that topic, pinned chats only under "Pinned" (never in the date-based
+    // groups).
     QSet<QString> topicIds;
     for (const auto &topic : m_topics)
         topicIds.insert(topic.id);
-    QVector<ChatSession *> pinned;
-    QVector<ChatSession *> deleted;
-    QVector<ChatSession *> dated;
-    QHash<QString, QVector<ChatSession *>> byTopic;
     for (auto *session : m_sessions) {
-        if (session->deletedAt().isValid())
+        if (session->deletedAt().isValid()) {
             deleted.push_back(session);
-        else if (!session->topicId().isEmpty() && topicIds.contains(session->topicId()))
-            byTopic[session->topicId()].push_back(session);
-        else if (session->pinned())
+        } else if (!session->topicId().isEmpty() && topicIds.contains(session->topicId())) {
+            auto it = byTopic.find(session->topicId());
+            if (it == byTopic.end())
+                it = byTopic.insert(session->topicId(), {});
+            it->push_back(session);
+        } else if (session->pinned()) {
             pinned.push_back(session);
-        else
+        } else {
             dated.push_back(session);
+        }
     }
     const auto byActivityDesc = [](QVector<ChatSession *> &chats) {
         std::ranges::sort(chats, [](const ChatSession *a, const ChatSession *b) {
@@ -236,35 +244,25 @@ void Sidebar::rebuildTree() {
     });
     for (auto &chats : byTopic)
         byActivityDesc(chats);
+}
 
-    m_tree->clear();
+QTreeWidgetItem *Sidebar::makeSection(const QString &key, const QString &label,
+                                      const QString &iconPath, bool expanded) {
+    auto *section = new QTreeWidgetItem(m_tree);
+    section->setText(0, label);
+    section->setData(0, kSessionIdRole, key);
+    section->setData(0, kIsGroupRole, true);
+    section->setData(0, kSectionRole, key);
+    section->setIcon(0, themedIcon(iconPath));
+    QFont sectionFont = section->font(0);
+    sectionFont.setBold(true);
+    section->setFont(0, sectionFont);
+    section->setExpanded(expanded);
+    return section;
+}
 
-    const auto makeSection = [&](const QString &key, const QString &label,
-                                 const QString &iconPath) {
-        auto *section = new QTreeWidgetItem(m_tree);
-        section->setText(0, label);
-        section->setData(0, kSessionIdRole, key);
-        section->setData(0, kIsGroupRole, true);
-        section->setData(0, kSectionRole, key);
-        section->setIcon(0, themedIcon(iconPath));
-        QFont sectionFont = section->font(0);
-        sectionFont.setBold(true);
-        section->setFont(0, sectionFont);
-        // On the first build the sections are expanded, except "Deleted"
-        // (a deleted chat must never make it expand automatically);
-        // afterwards the user's expand state is preserved exactly.
-        section->setExpanded(firstBuild ? key != QLatin1String("deleted")
-                                        : expandedKeys.contains(key));
-        return section;
-    };
-
-    auto *pinnedSection = makeSection(QStringLiteral("pinned"), tr("Pinned"),
-                                      QStringLiteral(":/resources/icons/pin-symbolic.svg"));
-    for (auto *session : pinned)
-        makeChatItem(pinnedSection, session);
-
-    auto *dateSection = makeSection(QStringLiteral("date"), tr("Date"),
-                                    QStringLiteral(":/resources/icons/date-symbolic.svg"));
+void Sidebar::buildDateSection(QTreeWidgetItem *dateSection, const QVector<ChatSession *> &dated,
+                               bool firstBuild, const QStringList &expandedKeys) {
     for (const auto &key : orderedGroupKeys(dated)) {
         auto *group = new QTreeWidgetItem(dateSection);
         group->setText(0, SessionGrouper::groupLabel(key));
@@ -283,10 +281,11 @@ void Sidebar::rebuildTree() {
             makeChatItem(group, session);
         }
     }
+}
 
-    auto *topicsSection =
-        makeSection(QStringLiteral("topics"), tr("Topic"),
-                    QStringLiteral(":/resources/icons/document-open-folder-symbolic.svg"));
+void Sidebar::buildTopicsSection(QTreeWidgetItem *topicsSection,
+                                 const QHash<QString, QVector<ChatSession *>> &byTopic,
+                                 bool firstBuild, const QStringList &expandedKeys) {
     for (const auto &topic : m_topics) {
         auto *topicItem = new QTreeWidgetItem(topicsSection);
         topicItem->setText(0, topic.name);
@@ -306,10 +305,49 @@ void Sidebar::rebuildTree() {
         for (auto *session : byTopic.value(topic.id))
             makeChatItem(topicItem, session);
     }
+}
+
+void Sidebar::rebuildTree() {
+    const QUuid current = currentSessionId();
+    const bool firstBuild = m_tree->topLevelItemCount() == 0;
+    const QStringList expandedKeys = collectExpandedKeys();
+
+    QVector<ChatSession *> pinned;
+    QVector<ChatSession *> deleted;
+    QVector<ChatSession *> dated;
+    QHash<QString, QVector<ChatSession *>> byTopic;
+    partitionSessions(pinned, deleted, dated, byTopic);
+
+    m_tree->clear();
+
+    // On the first build the sections are expanded, except "Deleted" (a
+    // deleted chat must never make it expand automatically); afterwards the
+    // user's expand state is preserved exactly.
+    const auto sectionExpanded = [&](const QString &key) {
+        return firstBuild ? key != QLatin1String("deleted") : expandedKeys.contains(key);
+    };
+
+    auto *pinnedSection = makeSection(QStringLiteral("pinned"), tr("Pinned"),
+                                      QStringLiteral(":/resources/icons/pin-symbolic.svg"),
+                                      sectionExpanded(QStringLiteral("pinned")));
+    for (auto *session : pinned)
+        makeChatItem(pinnedSection, session);
+
+    auto *dateSection = makeSection(QStringLiteral("date"), tr("Date"),
+                                    QStringLiteral(":/resources/icons/date-symbolic.svg"),
+                                    sectionExpanded(QStringLiteral("date")));
+    buildDateSection(dateSection, dated, firstBuild, expandedKeys);
+
+    auto *topicsSection =
+        makeSection(QStringLiteral("topics"), tr("Topic"),
+                    QStringLiteral(":/resources/icons/document-open-folder-symbolic.svg"),
+                    sectionExpanded(QStringLiteral("topics")));
+    buildTopicsSection(topicsSection, byTopic, firstBuild, expandedKeys);
 
     auto *deletedSection =
         makeSection(QStringLiteral("deleted"), tr("Deleted"),
-                    QStringLiteral(":/resources/icons/delete-symbolic-sidebar.svg"));
+                    QStringLiteral(":/resources/icons/delete-symbolic-sidebar.svg"),
+                    sectionExpanded(QStringLiteral("deleted")));
     for (auto *session : deleted)
         makeChatItem(deletedSection, session);
 
@@ -350,92 +388,97 @@ void Sidebar::showContextMenu(const QPoint &pos) {
     const QString itemTopicId = item->data(0, kTopicIdRole).toString();
 
     QMenu menu(this);
-    if (isChat) {
-        const QUuid chatId(item->data(0, kSessionIdRole).toString());
-        const bool pinState = item->data(0, kPinnedRole).toBool();
-        const QString chatTopicId = item->data(0, kTopicIdRole).toString();
-        QAction *pinAction = nullptr;
-        QAction *renameAction = nullptr;
-        QAction *removeFromTopicAction = nullptr;
-        QAction *deleteAction = nullptr;
-        QAction *restoreAction = nullptr;
-        QAction *permanentAction = nullptr;
-        if (section != QLatin1String("deleted")) {
-            pinAction = menu.addAction(pinState ? tr("Unpin chat") : tr("Pin chat"));
-            renameAction = menu.addAction(tr("Rename"));
-            addMoveToTopicSubmenu(&menu, chatId, chatTopicId);
-            if (section == QLatin1String("topics"))
-                removeFromTopicAction = menu.addAction(tr("Remove from topic"));
-            deleteAction = menu.addAction(tr("Delete chat"));
-            // Running, unread and already deleted chats can never be deleted.
-            deleteAction->setEnabled(!deletableSelectedSessionIds().isEmpty());
-        } else {
-            // Chats in the "Deleted" section: rename/move to a topic, plus
-            // restore or permanent deletion.
-            renameAction = menu.addAction(tr("Rename"));
-            addMoveToTopicSubmenu(&menu, chatId, chatTopicId);
-            menu.addSeparator();
-            restoreAction = menu.addAction(tr("Restore"));
-            permanentAction = menu.addAction(tr("Permanently delete"));
-        }
-        if (const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos))) {
-            if (picked == pinAction)
-                emit sessionPinToggled(chatId, !pinState);
-            else if (picked == renameAction)
-                emit sessionRenameRequested(chatId);
-            else if (picked == removeFromTopicAction)
-                emit sessionRemoveFromTopicRequested(chatId);
-            else if (picked == deleteAction)
-                emit sessionDeleteRequested(deletableSelectedSessionIds());
-            else if (picked == restoreAction)
-                emit sessionRestoreRequested(selectedDeletedSessionIds(item));
-            else if (picked == permanentAction)
-                emit sessionPermanentDeleteRequested(selectedDeletedSessionIds(item));
-        }
-        return;
-    }
-    if (!itemTopicId.isEmpty()) {
-        // A topic item: create a new topic, or rename/delete this one.
-        auto *createAction = menu.addAction(tr("New topic"));
-        auto *renameAction = menu.addAction(tr("Rename topic"));
-        auto *deleteAction = menu.addAction(tr("Delete topic"));
-        if (const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos))) {
-            if (picked == createAction)
-                emit topicCreateRequested();
-            else if (picked == renameAction)
-                emit topicRenameRequested(itemTopicId);
-            else if (picked == deleteAction)
-                emit topicDeleteRequested(itemTopicId);
-        }
-        return;
-    }
-    if (section == QLatin1String("topics")) {
-        // The "Topic" section header: create a new topic.
-        auto *createAction = menu.addAction(tr("New topic"));
-        if (menu.exec(m_tree->viewport()->mapToGlobal(pos)) == createAction)
-            emit topicCreateRequested();
-        return;
-    }
+    if (isChat)
+        populateChatMenu(menu, item, section);
+    else if (!itemTopicId.isEmpty())
+        populateTopicMenu(menu, itemTopicId);
+    else if (section == QLatin1String("topics"))
+        populateTopicsHeaderMenu(menu);
+    else if (section == QLatin1String("deleted"))
+        populateDeletedHeaderMenu(menu, item);
+    else
+        populateSectionMenu(menu);
+    menu.exec(m_tree->viewport()->mapToGlobal(pos));
+}
+
+// Chat entries: Pin/Unpin, Rename, Move to topic (submenu) and Delete —
+// chats inside a topic additionally get "Remove from topic", deleted chats
+// get Restore / Permanently delete (plus Rename and Move to topic).
+void Sidebar::populateChatMenu(QMenu &menu, const QTreeWidgetItem *item, const QString &section) {
+    const QUuid chatId(item->data(0, kSessionIdRole).toString());
+    const bool pinState = item->data(0, kPinnedRole).toBool();
+    const QString chatTopicId = item->data(0, kTopicIdRole).toString();
     if (section == QLatin1String("deleted")) {
-        // The "Deleted" section header: restore or permanently delete the
-        // selected deleted chats.
+        QAction *renameAction = menu.addAction(tr("Rename"));
+        connect(renameAction, &QAction::triggered, this,
+                [this, chatId]() { emit sessionRenameRequested(chatId); });
+        addMoveToTopicSubmenu(&menu, chatId, chatTopicId);
+        menu.addSeparator();
         const QList<QUuid> targets = selectedDeletedSessionIds(item);
-        auto *restoreAction = menu.addAction(tr("Restore"));
-        auto *permanentAction = menu.addAction(tr("Permanently delete"));
-        if (const QAction *picked = menu.exec(m_tree->viewport()->mapToGlobal(pos))) {
-            if (picked == restoreAction)
-                emit sessionRestoreRequested(targets);
-            else if (picked == permanentAction)
-                emit sessionPermanentDeleteRequested(targets);
-        }
+        QAction *restoreAction = menu.addAction(tr("Restore"));
+        connect(restoreAction, &QAction::triggered, this,
+                [this, targets]() { emit sessionRestoreRequested(targets); });
+        QAction *permanentAction = menu.addAction(tr("Permanently delete"));
+        connect(permanentAction, &QAction::triggered, this,
+                [this, targets]() { emit sessionPermanentDeleteRequested(targets); });
         return;
     }
-    // Section headers ("Pinned"/"Date") and time groups: delete the
-    // selected chats.
-    auto *deleteAction = menu.addAction(tr("Delete chat"));
+    QAction *pinAction = menu.addAction(pinState ? tr("Unpin chat") : tr("Pin chat"));
+    connect(pinAction, &QAction::triggered, this,
+            [this, chatId, pinState]() { emit sessionPinToggled(chatId, !pinState); });
+    QAction *renameAction = menu.addAction(tr("Rename"));
+    connect(renameAction, &QAction::triggered, this,
+            [this, chatId]() { emit sessionRenameRequested(chatId); });
+    addMoveToTopicSubmenu(&menu, chatId, chatTopicId);
+    if (section == QLatin1String("topics")) {
+        QAction *removeAction = menu.addAction(tr("Remove from topic"));
+        connect(removeAction, &QAction::triggered, this,
+                [this, chatId]() { emit sessionRemoveFromTopicRequested(chatId); });
+    }
+    QAction *deleteAction = menu.addAction(tr("Delete chat"));
+    // Running, unread and already deleted chats can never be deleted.
     deleteAction->setEnabled(!deletableSelectedSessionIds().isEmpty());
-    if (menu.exec(m_tree->viewport()->mapToGlobal(pos)) == deleteAction)
-        emit sessionDeleteRequested(deletableSelectedSessionIds());
+    connect(deleteAction, &QAction::triggered, this,
+            [this]() { emit sessionDeleteRequested(deletableSelectedSessionIds()); });
+}
+
+// A topic item: create a new topic, or rename/delete this one.
+void Sidebar::populateTopicMenu(QMenu &menu, const QString &topicId) {
+    QAction *createAction = menu.addAction(tr("New topic"));
+    connect(createAction, &QAction::triggered, this, [this]() { emit topicCreateRequested(); });
+    QAction *renameAction = menu.addAction(tr("Rename topic"));
+    connect(renameAction, &QAction::triggered, this,
+            [this, topicId]() { emit topicRenameRequested(topicId); });
+    QAction *deleteAction = menu.addAction(tr("Delete topic"));
+    connect(deleteAction, &QAction::triggered, this,
+            [this, topicId]() { emit topicDeleteRequested(topicId); });
+}
+
+// The "Topic" section header: create a new topic.
+void Sidebar::populateTopicsHeaderMenu(QMenu &menu) {
+    QAction *createAction = menu.addAction(tr("New topic"));
+    connect(createAction, &QAction::triggered, this, [this]() { emit topicCreateRequested(); });
+}
+
+// The "Deleted" section header: restore or permanently delete the selected
+// deleted chats.
+void Sidebar::populateDeletedHeaderMenu(QMenu &menu, const QTreeWidgetItem *item) {
+    const QList<QUuid> targets = selectedDeletedSessionIds(item);
+    QAction *restoreAction = menu.addAction(tr("Restore"));
+    connect(restoreAction, &QAction::triggered, this,
+            [this, targets]() { emit sessionRestoreRequested(targets); });
+    QAction *permanentAction = menu.addAction(tr("Permanently delete"));
+    connect(permanentAction, &QAction::triggered, this,
+            [this, targets]() { emit sessionPermanentDeleteRequested(targets); });
+}
+
+// Section headers ("Pinned"/"Date") and time groups: delete the selected
+// chats.
+void Sidebar::populateSectionMenu(QMenu &menu) {
+    QAction *deleteAction = menu.addAction(tr("Delete chat"));
+    deleteAction->setEnabled(!deletableSelectedSessionIds().isEmpty());
+    connect(deleteAction, &QAction::triggered, this,
+            [this]() { emit sessionDeleteRequested(deletableSelectedSessionIds()); });
 }
 
 QTreeWidgetItem *Sidebar::makeChatItem(QTreeWidgetItem *parent, const ChatSession *session) {
