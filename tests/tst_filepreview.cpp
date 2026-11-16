@@ -3,6 +3,7 @@
 #include "core/textextractor.h"
 
 #include <QGuiApplication>
+#include <QIcon>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -15,7 +16,8 @@ private slots:
     void categoryForFileMapsExtensions();
     void badgeForCategoryCoversCategories();
     void thumbnailForTextFileIsValidPng();
-    void thumbnailForTextFileShowsContent();
+    void thumbnailForTextFileUsesPageIconWithoutOverflow();
+    void pdfThumbnailHasImageResolutionAndPageMargins();
     void thumbnailForOfficeWithEmbeddedPreview();
     void thumbnailForOdfWithEmbeddedPreview();
     void thumbnailForOfficeWithoutEmbeddedPreviewFallsBackToIcon();
@@ -25,7 +27,6 @@ private slots:
     void thumbnailRespectsMaxEdge();
     void thumbnailForMissingFileFallsBackToIcon();
     void thumbnailWithNonPositiveEdgeIsEmpty();
-    void pdfThumbnailMatchesRenderFirstPdfPage();
 };
 
 void TestFilePreview::categoryForFileMapsExtensions() {
@@ -123,29 +124,56 @@ void TestFilePreview::thumbnailForTextFileIsValidPng() {
     QVERIFY(qMax(image.width(), image.height()) <= 64);
 }
 
-void TestFilePreview::thumbnailForTextFileShowsContent() {
-    // The text preview paints the file's first lines in dark pixels on a
-    // white page; a line-only tile (the fallback) would not have dark text
-    // pixels in the upper text area.
+void TestFilePreview::thumbnailForTextFileUsesPageIconWithoutOverflow() {
+    // Text files show a page icon (icon theme's text-plain when available,
+    // otherwise the drawn Breeze-style fallback) — not rendered file content.
+    // Even with very long lines, nothing may overflow the page/tile.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString path = dir.filePath(QStringLiteral("code.py"));
-    writeFile(path, "def hello():\n    print('hi')\n");
+    const QString path = dir.filePath(QStringLiteral("notes.md"));
+    writeFile(path, (QString(500, QLatin1Char('x')) + QLatin1Char('\n') +
+                     QString(500, QLatin1Char('y')) + QLatin1Char('\n'))
+                        .toUtf8());
 
     const QByteArray thumbnail = FilePreview::thumbnailForFile(path, 96);
     QVERIFY(!thumbnail.isEmpty());
     const QImage image = decodePng(thumbnail);
     QVERIFY(!image.isNull());
-    // Scan the page area for dark (text) pixels.
-    int darkPixels = 0;
+    QCOMPARE(qMax(image.width(), image.height()), 96);
+
+    // Bounding box of all visible (non-transparent) pixels.
+    int minX = image.width(), minY = image.height(), maxX = -1, maxY = -1;
+    int linePixels = 0;
     for (int y = 0; y < image.height(); ++y) {
         for (int x = 0; x < image.width(); ++x) {
             const QColor c = image.pixelColor(x, y);
-            if (c.red() < 100 && c.green() < 100 && c.blue() < 100)
-                ++darkPixels;
+            if (c.alpha() <= 0)
+                continue;
+            minX = qMin(minX, x);
+            minY = qMin(minY, y);
+            maxX = qMax(maxX, x);
+            maxY = qMax(maxY, y);
+            // A text line pixel: visible but not (near-)white page.
+            if (c.alpha() > 200 && (c.red() < 200 || c.green() < 200 || c.blue() < 200))
+                ++linePixels;
         }
     }
-    QVERIFY(darkPixels > 20);
+    QVERIFY(maxX >= 0);
+    // The icon has text lines...
+    QVERIFY(linePixels > 20);
+
+    if (QIcon::fromTheme(QStringLiteral("text-plain")).isNull()) {
+        // Drawn fallback (headless CI): the page with its lines must stay
+        // inset from all four tile edges (no overflow), and the tile corners
+        // are transparent.
+        const int inset = 96 / 10;
+        QVERIFY(minX >= inset);
+        QVERIFY(minY >= inset);
+        QVERIFY(maxX < image.width() - inset);
+        QVERIFY(maxY < image.height() - inset);
+        QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
+        QCOMPARE(image.pixelColor(image.width() - 1, image.height() - 1).alpha(), 0);
+    }
 }
 
 void TestFilePreview::thumbnailForOfficeWithEmbeddedPreview() {
@@ -232,7 +260,7 @@ void TestFilePreview::thumbnailWithNonPositiveEdgeIsEmpty() {
     QVERIFY(FilePreview::thumbnailForFile(QStringLiteral("notes.txt"), -5).isEmpty());
 }
 
-void TestFilePreview::pdfThumbnailMatchesRenderFirstPdfPage() {
+void TestFilePreview::pdfThumbnailHasImageResolutionAndPageMargins() {
     if (!TextExtractor::hasPoppler())
         QSKIP("Poppler not available in this build");
     // A minimal but valid single-page PDF.
@@ -247,17 +275,27 @@ void TestFilePreview::pdfThumbnailMatchesRenderFirstPdfPage() {
                "trailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF\n");
     file.close();
 
-    const QImage rendered = TextExtractor::renderFirstPdfPage(path, 96);
-    if (rendered.isNull())
+    if (TextExtractor::renderFirstPdfPage(path, 96).isNull())
         QSKIP("Poppler could not render the minimal test PDF");
-    QVERIFY(qMax(rendered.width(), rendered.height()) <= 96);
 
+    // Even when a small tile is requested, the PDF preview is rendered at
+    // the same max edge as image attachments in the chat.
     const QByteArray thumbnail = FilePreview::thumbnailForFile(path, 96);
     QVERIFY(!thumbnail.isEmpty());
     const QImage thumbImage = decodePng(thumbnail);
     QVERIFY(!thumbImage.isNull());
-    // The PDF preview should be close to the directly rendered page size.
-    QCOMPARE(qMax(thumbImage.width(), thumbImage.height()), 96);
+    QCOMPARE(qMax(thumbImage.width(), thumbImage.height()), FilePreview::imageThumbnailEdge());
+
+    // Dolphin-style page tile: the page is inset with margins, so the tile
+    // corners are transparent and the center is the (white) page.
+    QCOMPARE(thumbImage.pixelColor(0, 0).alpha(), 0);
+    QCOMPARE(thumbImage.pixelColor(thumbImage.width() - 1, 0).alpha(), 0);
+    QVERIFY(thumbImage.pixelColor(thumbImage.width() / 2, thumbImage.height() / 2).alpha() > 200);
+
+    // A larger request is honored as well.
+    const QImage bigger = decodePng(FilePreview::thumbnailForFile(path, 512));
+    QVERIFY(!bigger.isNull());
+    QCOMPARE(qMax(bigger.width(), bigger.height()), 512);
 }
 
 // QTEST_MAIN equivalent that forces the offscreen platform: the thumbnail

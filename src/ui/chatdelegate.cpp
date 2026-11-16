@@ -1,5 +1,6 @@
 #include "ui/chatdelegate.h"
 #include "core/attachmentopener.h"
+#include "core/filepreview.h"
 #include "core/markdown.h"
 #include "core/message.h"
 #include "ui/theme.h"
@@ -42,7 +43,10 @@ constexpr int kItemSpacing = 8;       // breathing room below each item
 constexpr int kBubblePadding = 10;
 constexpr int kBubbleRadius = 10;
 constexpr int kMaxBubbleWidthFraction = 80; // percent of viewport width
-constexpr int kImageSize = 320;             // max thumbnail edge in the chat
+// Max thumbnail edge in the chat; PDF page previews are rendered at this
+// same edge (FilePreview::imageThumbnailEdge()) so documents are as sharp
+// as images.
+constexpr int kImageSize = FilePreview::imageThumbnailEdge();
 constexpr int kImageSpacing = 6;
 constexpr int kImageCaptionHeight = 16; // file-name caption below an image
 constexpr int kFileChipHeight = 80;     // height of a file chip in the chat

@@ -5,6 +5,7 @@
 #include <QBuffer>
 #include <QFileInfo>
 #include <QFont>
+#include <QIcon>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -41,6 +42,10 @@ QColor tileColor(FileCategory category) {
     return {0x75, 0x75, 0x75};
 }
 
+// Draws the white page with folded corner shared by the page-like tiles.
+void drawPage(QPainter &painter, int size, qreal &x, qreal &y, qreal &pageWidth, qreal &pageHeight,
+              qreal &fold);
+
 // Draws a white page with a folded corner plus a colored badge with the
 // category letter, used for file types without a real page preview.
 QImage iconTile(FileCategory category, int size) {
@@ -49,30 +54,8 @@ QImage iconTile(FileCategory category, int size) {
     QPainter painter(&tile);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const qreal margin = size * 0.18;
-    const qreal pageWidth = size - (2 * margin);
-    const qreal pageHeight = pageWidth * 1.3;
-    const qreal fold = pageWidth * 0.22;
-    const qreal x = (size - pageWidth) / 2.0;
-    const qreal y = (size - pageHeight) / 2.0;
-
-    QPainterPath page;
-    page.moveTo(x, y);
-    page.lineTo(x + pageWidth - fold, y);
-    page.lineTo(x + pageWidth, y + fold);
-    page.lineTo(x + pageWidth, y + pageHeight);
-    page.lineTo(x, y + pageHeight);
-    page.closeSubpath();
-    painter.setPen(QPen(QColor(0, 0, 0, 60), 1));
-    painter.setBrush(Qt::white);
-    painter.drawPath(page);
-    QPainterPath foldPath;
-    foldPath.moveTo(x + pageWidth - fold, y);
-    foldPath.lineTo(x + pageWidth, y + fold);
-    foldPath.lineTo(x + pageWidth - fold, y + fold);
-    foldPath.closeSubpath();
-    painter.setBrush(QColor(0xe0, 0xe0, 0xe0));
-    painter.drawPath(foldPath);
+    qreal x = 0, y = 0, pageWidth = 0, pageHeight = 0, fold = 0;
+    drawPage(painter, size, x, y, pageWidth, pageHeight, fold);
 
     const QString badge = FilePreview::badgeForCategory(category);
     if (!badge.isEmpty()) {
@@ -93,19 +76,17 @@ QImage iconTile(FileCategory category, int size) {
     return tile;
 }
 
-// Draws a text page tile: white page, folded corner and dark text lines.
-QImage textTile(int size) {
-    QImage tile(size, size, QImage::Format_ARGB32);
-    tile.fill(Qt::transparent);
-    QPainter painter(&tile);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-
-    const qreal margin = size * 0.18;
-    const qreal pageWidth = size - (2 * margin);
-    const qreal pageHeight = pageWidth * 1.3;
-    const qreal fold = pageWidth * 0.22;
-    const qreal x = (size - pageWidth) / 2.0;
-    const qreal y = (size - pageHeight) / 2.0;
+// Draws the white page with folded corner shared by the page-like tiles.
+// Returns the page geometry (x, y, pageWidth, pageHeight, fold) via out-params.
+void drawPage(QPainter &painter, int size, qreal &x, qreal &y, qreal &pageWidth, qreal &pageHeight,
+              qreal &fold) {
+    const qreal marginX = size * 0.18;
+    const qreal marginY = size * 0.12;
+    pageWidth = size - (2 * marginX);
+    pageHeight = qMin(pageWidth * 1.3, size - (2 * marginY));
+    fold = pageWidth * 0.22;
+    x = (size - pageWidth) / 2.0;
+    y = (size - pageHeight) / 2.0;
 
     QPainterPath page;
     page.moveTo(x, y);
@@ -124,16 +105,80 @@ QImage textTile(int size) {
     foldPath.closeSubpath();
     painter.setBrush(QColor(0xe0, 0xe0, 0xe0));
     painter.drawPath(foldPath);
+}
 
-    painter.setPen(QPen(tileColor(FileCategory::Text), qMax(1.0, size * 0.035)));
-    const qreal lineLeft = x + (pageWidth * 0.18);
-    const qreal lineRight = x + (pageWidth * 0.82);
-    const qreal lineSpacing = pageHeight * 0.13;
-    qreal lineY = y + (pageHeight * 0.28);
-    while (lineY < y + (pageHeight * 0.82)) {
+// Draws a text file tile in the style of the Breeze "text-plain" icon: white
+// page, folded corner and a few thin gray text lines, all contained within
+// the page (no overflowing content text).
+QImage textTile(int size) {
+    QImage tile(size, size, QImage::Format_ARGB32);
+    tile.fill(Qt::transparent);
+    QPainter painter(&tile);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    qreal x = 0, y = 0, pageWidth = 0, pageHeight = 0, fold = 0;
+    drawPage(painter, size, x, y, pageWidth, pageHeight, fold);
+
+    // Text lines strictly inside the page bounds.
+    const qreal lineLeft = x + (pageWidth * 0.20);
+    const qreal lineRight = x + (pageWidth * 0.80);
+    constexpr int kLineCount = 5;
+    const qreal top = y + (pageHeight * 0.30);
+    const qreal bottom = y + (pageHeight * 0.85);
+    const qreal spacing = (bottom - top) / (kLineCount - 1);
+    painter.setPen(
+        QPen(QColor(0x71, 0x79, 0x7f), qMax(1.0, size * 0.018), Qt::SolidLine, Qt::RoundCap));
+    for (int i = 0; i < kLineCount; ++i) {
+        const qreal lineY = top + (i * spacing);
         painter.drawLine(QPointF(lineLeft, lineY), QPointF(lineRight, lineY));
-        lineY += lineSpacing;
     }
+    painter.end();
+    return tile;
+}
+
+// Renders the icon theme's icon for a file type (like Dolphin does), e.g.
+// "text-plain" for text files. Returns a null image when no icon theme
+// provides the icon (e.g. headless test environments).
+QImage themeIconTile(const QStringList &names, int size) {
+    for (const auto &name : names) {
+        const QIcon icon = QIcon::fromTheme(name);
+        if (icon.isNull())
+            continue;
+        const QImage image = icon.pixmap(size, size).toImage();
+        if (!image.isNull())
+            return image;
+    }
+    return {};
+}
+
+// Composes a rendered page (e.g. a PDF's first page) into a square tile the
+// way file managers do: the page keeps its aspect ratio, is centered with a
+// margin, and gets a soft drop shadow.
+QImage pageTileWithPreview(const QImage &page, int size) {
+    QImage tile(size, size, QImage::Format_ARGB32);
+    tile.fill(Qt::transparent);
+    QPainter painter(&tile);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    const qreal margin = size * 0.12;
+    const qreal avail = size - (2 * margin);
+    const qreal scale = qMin(avail / page.width(), avail / page.height());
+    const qreal pageWidth = page.width() * scale;
+    const qreal pageHeight = page.height() * scale;
+    const qreal x = (size - pageWidth) / 2.0;
+    const qreal y = (size - pageHeight) / 2.0;
+
+    // Soft shadow in two layers.
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 45));
+    painter.drawRoundedRect(QRectF(x + 2.0, y + 3.0, pageWidth, pageHeight), 2, 2);
+    painter.setBrush(QColor(0, 0, 0, 70));
+    painter.drawRoundedRect(QRectF(x + 1.0, y + 1.5, pageWidth, pageHeight), 2, 2);
+    // White page behind the render.
+    painter.setBrush(Qt::white);
+    painter.drawRoundedRect(QRectF(x, y, pageWidth, pageHeight), 2, 2);
+    painter.drawImage(QRectF(x, y, pageWidth, pageHeight), page);
     painter.end();
     return tile;
 }
@@ -185,74 +230,6 @@ QImage embeddedPreviewFromOffice(const QString &path) {
     return {};
 }
 #endif
-
-// Renders the first lines of a text file onto a white page tile, so text
-// attachments show a real content preview instead of a generic icon.
-QImage textContentTile(const QString &path, int size) {
-    QString error;
-    QString text = TextExtractor::extractFromTextFile(path, &error);
-    if (text.isEmpty())
-        return {};
-    // Long lines would overflow the tile; cut them at a sane width.
-    const int maxLineChars = qMax(20, size);
-    QStringList lines = text.split(QLatin1Char('\n'));
-    for (auto &line : lines) {
-        line.replace(QLatin1Char('\t'), QStringLiteral("    "));
-        if (line.size() > maxLineChars)
-            line = line.left(maxLineChars) + QChar(0x2026); // horizontal ellipsis
-    }
-
-    QImage tile(size, size, QImage::Format_ARGB32);
-    tile.fill(Qt::transparent);
-    QPainter painter(&tile);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-
-    const qreal margin = size * 0.18;
-    const qreal pageWidth = size - (2 * margin);
-    const qreal pageHeight = pageWidth * 1.3;
-    const qreal fold = pageWidth * 0.22;
-    const qreal x = (size - pageWidth) / 2.0;
-    const qreal y = (size - pageHeight) / 2.0;
-
-    QPainterPath page;
-    page.moveTo(x, y);
-    page.lineTo(x + pageWidth - fold, y);
-    page.lineTo(x + pageWidth, y + fold);
-    page.lineTo(x + pageWidth, y + pageHeight);
-    page.lineTo(x, y + pageHeight);
-    page.closeSubpath();
-    painter.setPen(QPen(QColor(0, 0, 0, 60), 1));
-    painter.setBrush(Qt::white);
-    painter.drawPath(page);
-    QPainterPath foldPath;
-    foldPath.moveTo(x + pageWidth - fold, y);
-    foldPath.lineTo(x + pageWidth, y + fold);
-    foldPath.lineTo(x + pageWidth - fold, y + fold);
-    foldPath.closeSubpath();
-    painter.setBrush(QColor(0xe0, 0xe0, 0xe0));
-    painter.drawPath(foldPath);
-
-    QFont font(QStringLiteral("Monospace"));
-    font.setStyleHint(QFont::TypeWriter);
-    font.setPixelSize(qMax(5, static_cast<int>(size * 0.09)));
-    painter.setFont(font);
-    painter.setPen(QColor(0x1a, 0x1a, 0x1a));
-    const QFontMetrics metrics(font);
-    const qreal lineSpacing = metrics.lineSpacing() * 1.15;
-    const QRect textRect(static_cast<int>(x + (pageWidth * 0.14)),
-                         static_cast<int>(y + (pageHeight * 0.16)),
-                         static_cast<int>(pageWidth * 0.72), static_cast<int>(pageHeight * 0.72));
-    qreal lineY = textRect.top();
-    for (const auto &line : lines) {
-        if (lineY + lineSpacing > textRect.bottom())
-            break;
-        painter.drawText(QPointF(textRect.left(), lineY + metrics.ascent()), line);
-        lineY += lineSpacing;
-    }
-    painter.end();
-    return tile;
-}
 
 QByteArray encodePng(const QImage &image) {
     QByteArray bytes;
@@ -326,15 +303,28 @@ QByteArray FilePreview::thumbnailForFile(const QString &path, int maxEdge) {
     const FileCategory category = categoryForFile(path);
 
     QImage preview;
+    // Output edge: PDFs are rendered at least at imageThumbnailEdge() so the
+    // page preview is exactly as sharp as an image thumbnail in the chat,
+    // even when the caller only needs a small tile.
+    int outEdge = maxEdge;
     if (category == FileCategory::Pdf) {
-        preview = TextExtractor::renderFirstPdfPage(path, maxEdge);
+        outEdge = qMax(maxEdge, imageThumbnailEdge());
+        // Render the page slightly smaller than the tile, then compose it
+        // into a page tile with margins and a soft shadow (Dolphin-style).
+        const int pageEdge = qMax(1, outEdge - qRound(outEdge * 0.24));
+        const QImage page = TextExtractor::renderFirstPdfPage(path, pageEdge);
+        if (!page.isNull())
+            preview = pageTileWithPreview(page, outEdge);
     } else if (category == FileCategory::Word || category == FileCategory::Spreadsheet ||
                category == FileCategory::Presentation) {
 #if OKAPI_HAVE_LIBARCHIVE
         preview = embeddedPreviewFromOffice(path);
 #endif
     } else if (category == FileCategory::Text) {
-        preview = textContentTile(path, maxEdge);
+        // Text files get the icon theme's text-plain icon (like Dolphin);
+        // the drawn page tile is the fallback when no icon theme is present.
+        preview = themeIconTile({QStringLiteral("text-plain"), QStringLiteral("text-x-generic")},
+                                maxEdge);
     }
     if (preview.isNull()) {
         if (category == FileCategory::Text)
@@ -344,8 +334,8 @@ QByteArray FilePreview::thumbnailForFile(const QString &path, int maxEdge) {
     }
     if (preview.isNull())
         return {};
-    if (qMax(preview.width(), preview.height()) > maxEdge)
-        preview = preview.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (qMax(preview.width(), preview.height()) > outEdge)
+        preview = preview.scaled(outEdge, outEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     return encodePng(preview);
 }
 
