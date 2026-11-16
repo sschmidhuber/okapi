@@ -45,6 +45,24 @@ public:
         m_draft = draft.isNull() ? QStringLiteral("") : std::move(draft);
     }
 
+    // Pinned chats are listed under the sidebar's "Pinned" section instead
+    // of the date-based groups.
+    [[nodiscard]] bool pinned() const { return m_pinned; }
+    void setPinned(bool pinned) { m_pinned = pinned; }
+    // When the chat was moved to the sidebar's "Deleted" section (an invalid
+    // date means the chat is not deleted).
+    [[nodiscard]] QDateTime deletedAt() const { return m_deletedAt; }
+    void setDeletedAt(const QDateTime &deletedAt) { m_deletedAt = deletedAt; }
+    // The topic the chat is assigned to (sidebar "Topic" section); an empty
+    // id means the chat is not in a topic. Pin and topic are mutually
+    // exclusive: pinning clears the topic and vice versa. Never null: a
+    // null QString would bind as SQL NULL and violate the column's NOT
+    // NULL constraint.
+    [[nodiscard]] QString topicId() const { return m_topicId; }
+    void setTopicId(QString topicId) {
+        m_topicId = topicId.isNull() ? QStringLiteral("") : std::move(topicId);
+    }
+
     [[nodiscard]] const QVector<Message> &messages() const { return m_messages; }
 
     Message &appendMessage(Role role, const QString &content = {}, bool streaming = false);
@@ -91,6 +109,9 @@ private:
     QDateTime m_createdAt = QDateTime::currentDateTime();
     QDateTime m_lastActivityAt = m_createdAt;
     QString m_draft = QStringLiteral("");
+    bool m_pinned = false;
+    QDateTime m_deletedAt;
+    QString m_topicId = QStringLiteral("");
 };
 
 } // namespace okapi

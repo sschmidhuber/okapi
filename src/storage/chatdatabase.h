@@ -27,6 +27,21 @@ struct StoredSession {
     QDateTime lastActivityAt;
     // Unsaved composer text of the chat (persisted so it survives restarts).
     QString draft;
+    // Pinned chats live under the sidebar's "Pinned" section instead of
+    // the date-based groups.
+    bool pinned = false;
+    // When the chat was moved to the "Deleted" section (invalid = not
+    // deleted). Deleted chats are purged permanently after 30 days.
+    QDateTime deletedAt;
+    // The topic the chat is assigned to (empty = not in a topic). Chats in
+    // a topic are listed under that topic in the sidebar's "Topic" section.
+    QString topicId;
+};
+
+// One user-created topic row (sidebar "Topic" section).
+struct StoredTopic {
+    QString id;
+    QString name;
 };
 
 struct StoredMessage {
@@ -94,6 +109,22 @@ public:
     // Persists only the unsent composer draft of a session (lightweight
     // update for the debounced composer-text writes).
     bool setSessionDraft(const QString &sessionId, const QString &draft);
+    // Marks a session pinned/unpinned (sidebar "Pinned" section).
+    bool setSessionPinned(const QString &sessionId, bool pinned);
+    // Marks a session as deleted (moved to the sidebar's "Deleted" section)
+    // or restores it (invalid date clears the marker).
+    bool setSessionDeletedAt(const QString &sessionId, const QDateTime &deletedAt);
+    // Assigns a session to a topic (empty topicId removes it from its topic).
+    bool setSessionTopic(const QString &sessionId, const QString &topicId);
+    // Topics (sidebar "Topic" section), ordered by creation.
+    [[nodiscard]] QVector<StoredTopic> loadTopics() const;
+    bool insertTopic(const QString &topicId, const QString &name);
+    bool renameTopic(const QString &topicId, const QString &name);
+    // Deletes a topic; chats that were in it lose their topic assignment.
+    bool deleteTopic(const QString &topicId);
+    // Permanently removes all sessions deleted before the cutoff; returns
+    // the number of removed rows.
+    int deleteSessionsDeletedBefore(const QDateTime &cutoff);
     bool deleteSession(const QString &sessionId);
     // Deletes the given messages of a session (attachments first); used when
     // a user message is edited and the tail of the history is resent.

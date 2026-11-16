@@ -3,8 +3,12 @@
 #include "ui/sidebar.h"
 
 #include <QApplication>
+#include <QDropEvent>
+#include <QMenu>
+#include <QMimeData>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QtTest>
 
@@ -13,6 +17,9 @@
 using namespace okapi;
 
 namespace {
+
+constexpr auto kIsGroupRole = Qt::UserRole + 1;
+constexpr auto kTopicIdRole = Qt::UserRole + 4;
 
 std::unique_ptr<ChatSession> makeSession(const QString &title, const QDateTime &activity) {
     auto session = std::make_unique<ChatSession>(title, QStringLiteral("backend"));
@@ -23,12 +30,155 @@ std::unique_ptr<ChatSession> makeSession(const QString &title, const QDateTime &
 QTreeWidgetItem *groupItem(QTreeWidget *tree, const QDateTime &activity) {
     const QString label = SessionGrouper::groupLabel(
         SessionGrouper::groupKey(activity, QDateTime::currentDateTime()));
+    // Time groups are nested below the "Date" section, so search recursively.
+    const auto items = tree->findItems(label, Qt::MatchExactly | Qt::MatchRecursive, 0);
+    return items.isEmpty() ? nullptr : items.first();
+}
+
+// Top-level section ("Pinned"/"Date"/"Topic"/"Deleted") by its object key
+// stored in the session-id role.
+QTreeWidgetItem *sectionItem(QTreeWidget *tree, const QString &key) {
     for (int i = 0; i < tree->topLevelItemCount(); ++i) {
         auto *item = tree->topLevelItem(i);
-        if (item->text(0) == label)
+        if (item->data(0, Qt::UserRole).toString() == key)
             return item;
     }
     return nullptr;
+}
+
+// A topic item under the "Topic" section, by its topic id.
+QTreeWidgetItem *topicItem(QTreeWidget *tree, const QString &topicId) {
+    const auto items =
+        tree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive, 0);
+    for (auto *item : items) {
+        if (item->data(0, kIsGroupRole).toBool() &&
+            item->data(0, kTopicIdRole).toString() == topicId)
+            return item;
+    }
+    return nullptr;
+}
+
+// The tree item of a chat, by its session id.
+QTreeWidgetItem *chatItem(QTreeWidget *tree, const QUuid &id) {
+    const auto items =
+        tree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive, 0);
+    for (auto *item : items) {
+        if (!item->data(0, kIsGroupRole).toBool() &&
+            item->data(0, Qt::UserRole).toString() == id.toString())
+            return item;
+    }
+    return nullptr;
+}
+
+// Opens the context menu at item and triggers the action at the given path
+// (e.g. {"Move to topic", "Research"} for a submenu entry). Returns the
+// triggered action, or nullptr when the menu or the path was not found.
+// The menu is a child of the sidebar, so it is found via findChild() even
+// before the popup is shown.
+QAction *triggerContextMenuAction(QWidget *sidebar, QTreeWidget *tree, QTreeWidgetItem *item,
+                                  const QStringList &path) {
+    QAction *triggered = nullptr;
+    QTimer::singleShot(0, [sidebar, &triggered, path]() {
+        auto *menu = sidebar->findChild<QMenu *>();
+        if (!menu)
+            return;
+        QMenu *current = menu;
+        QAction *action = nullptr;
+        for (const QString &text : path) {
+            action = nullptr;
+            const auto actions = current->actions();
+            for (auto *a : actions) {
+                if (a->text() == text) {
+                    action = a;
+                    break;
+                }
+            }
+            if (!action)
+                return;
+            if (action->menu())
+                current = action->menu();
+        }
+        if (action) {
+            triggered = action;
+            if (current == menu) {
+                // Activate the action the way the keyboard would, so exec()
+                // returns it as the picked action.
+                menu->setActiveAction(action);
+                QTest::keyClick(menu, Qt::Key_Return);
+            } else {
+                // Submenu entry: its triggered() signal is connected
+                // directly, so trigger it and close the menu to end exec().
+                action->trigger();
+                menu->close();
+            }
+        }
+    });
+    emit tree->customContextMenuRequested(tree->visualItemRect(item).center());
+    return triggered;
+}
+
+// Opens the context menu at item and looks up the action at the given path
+// (e.g. {"Move to topic", "Research"}). Returns whether the action exists;
+// when enabledOut is given, it receives the action's enabled state. The
+// state is read while the menu is still open (the QMenu is stack-allocated
+// in showContextMenu, so the action pointer would dangle afterwards).
+bool contextMenuAction(QWidget *sidebar, QTreeWidget *tree, QTreeWidgetItem *item,
+                       const QStringList &path, bool *enabledOut = nullptr) {
+    bool found = false;
+    bool actionEnabled = false;
+    QTimer::singleShot(0, [sidebar, &found, &actionEnabled, path]() {
+        auto *menu = sidebar->findChild<QMenu *>();
+        if (!menu)
+            return;
+        QMenu *current = menu;
+        QAction *action = nullptr;
+        for (const QString &text : path) {
+            action = nullptr;
+            const auto actions = current->actions();
+            for (auto *a : actions) {
+                if (a->text() == text) {
+                    action = a;
+                    break;
+                }
+            }
+            if (!action)
+                break;
+            if (action->menu())
+                current = action->menu();
+        }
+        if (action) {
+            found = true;
+            actionEnabled = action->isEnabled();
+        }
+        // Dismiss the menu without picking anything (close() ends exec()).
+        menu->close();
+    });
+    emit tree->customContextMenuRequested(tree->visualItemRect(item).center());
+    if (enabledOut)
+        *enabledOut = actionEnabled;
+    return found;
+}
+
+// Feeds a synthetic drop at target (with chat selected) into the sidebar's
+// viewport event filter, which translates it into sessionsDropped().
+void dropOn(Sidebar &sidebar, QTreeWidget *tree, QTreeWidgetItem *chat, QTreeWidgetItem *target) {
+    chat->setSelected(true);
+    tree->setCurrentItem(chat);
+    QMimeData mimeData;
+    QDropEvent event(tree->visualItemRect(target).center(), Qt::MoveAction, &mimeData,
+                     Qt::LeftButton, Qt::NoModifier);
+    sidebar.eventFilter(tree->viewport(), &event);
+}
+
+int countChatItems(QTreeWidget *tree) {
+    int count = 0;
+    const auto items =
+        tree->findItems(QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive, 0);
+    for (const auto *item : items) {
+        if (!item->data(0, Qt::UserRole + 1).toBool())
+            ++count;
+    }
+    return count;
 }
 
 } // namespace
@@ -45,6 +195,17 @@ private slots:
     void sidebarHasNoToolbarButtons();
     void indicatorsBadgeRunningAndUnreadChats();
     void indicatorsBadgeDraftChats();
+    void pinnedAndDeletedSections();
+    void topicsSectionListsChatsUnderTheirTopic();
+    void deletedSectionNotExpandedOnFirstBuildOrAfterDelete();
+    void contextMenuTopicHeaderCreatesTopic();
+    void contextMenuTopicItemRenamesAndDeletes();
+    void contextMenuChatInTopic();
+    void contextMenuChatInDateAndPinnedHasRenameAndMoveToTopic();
+    void contextMenuChatInDeleted();
+    void moveToTopicSubmenuListsTopicsAndDisablesCurrent();
+    void dropChatOntoSectionsAndTopics();
+    void deletableSelectionExcludesDeletedChats();
     void multiSelectionViaCtrlAndShiftClick();
     void selectedGroupExpandsToItsChats();
     void deletableSelectionExcludesRunningAndUnread();
@@ -64,7 +225,17 @@ void TestSidebar::firstBuildExpandsOnlyToday() {
     QVERIFY(tree);
     sidebar.setSessions(sessions);
 
-    QCOMPARE(tree->topLevelItemCount(), 3);
+    // The four top-level sections are always present, in this order.
+    QCOMPARE(tree->topLevelItemCount(), 4);
+    QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("Pinned"));
+    QCOMPARE(tree->topLevelItem(1)->text(0), QStringLiteral("Topic"));
+    QCOMPARE(tree->topLevelItem(2)->text(0), QStringLiteral("Date"));
+    QCOMPARE(tree->topLevelItem(3)->text(0), QStringLiteral("Deleted"));
+    // Every section carries its icon; "Deleted" starts collapsed.
+    for (int i = 0; i < 4; ++i)
+        QVERIFY(!tree->topLevelItem(i)->icon(0).isNull());
+    QVERIFY(tree->topLevelItem(1)->isExpanded());
+    QVERIFY(!tree->topLevelItem(3)->isExpanded());
     auto *todayGroup = groupItem(tree, now);
     auto *yesterdayGroup = groupItem(tree, now.addDays(-1));
     auto *oldGroup = groupItem(tree, now.addDays(-8));
@@ -141,7 +312,7 @@ void TestSidebar::currentSessionIdIsNullForGroupItems() {
     QVERIFY(tree);
     sidebar.setSessions(sessions);
 
-    auto *group = tree->topLevelItem(0);
+    auto *group = groupItem(tree, now);
     QVERIFY(group);
     tree->setCurrentItem(group);
     QVERIFY(sidebar.currentSessionId().isNull());
@@ -166,10 +337,13 @@ void TestSidebar::emptySessionsClearTree() {
     auto *tree = sidebar.findChild<QTreeWidget *>();
     QVERIFY(tree);
     sidebar.setSessions({today.get()});
-    QCOMPARE(tree->topLevelItemCount(), 1);
+    // The sections stay, the chat is listed under "Date".
+    QCOMPARE(tree->topLevelItemCount(), 4);
+    QCOMPARE(countChatItems(tree), 1);
 
     sidebar.setSessions({});
-    QCOMPARE(tree->topLevelItemCount(), 0);
+    QCOMPARE(tree->topLevelItemCount(), 4);
+    QCOMPARE(countChatItems(tree), 0);
 }
 
 // The running/unread badges: a running chat shows a spinner icon, an
@@ -289,6 +463,418 @@ void TestSidebar::indicatorsBadgeDraftChats() {
     QVERIFY(group);
     for (int i = 0; i < group->childCount(); ++i)
         QVERIFY(group->child(i)->icon(0).isNull());
+}
+
+// The three top-level sections: pinned chats appear under "Pinned" (sorted
+// by last activity, newest first) and NOT in the date groups; deleted chats
+// appear under "Deleted" (sorted by deletion time, newest first) and not in
+// the date groups either. Section headers carry their icons.
+void TestSidebar::pinnedAndDeletedSections() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto pinnedOld = makeSession(QStringLiteral("pinned old"), now.addSecs(-7200));
+    auto pinnedNew = makeSession(QStringLiteral("pinned new"), now);
+    pinnedOld->setPinned(true);
+    pinnedNew->setPinned(true);
+    auto deletedOld = makeSession(QStringLiteral("deleted old"), now.addDays(-5));
+    auto deletedNew = makeSession(QStringLiteral("deleted new"), now.addDays(-1));
+    deletedOld->setDeletedAt(now.addDays(-10));
+    deletedNew->setDeletedAt(now.addDays(-2));
+    auto normal = makeSession(QStringLiteral("normal chat"), now);
+    const QVector<ChatSession *> sessions{pinnedOld.get(), pinnedNew.get(), deletedOld.get(),
+                                          deletedNew.get(), normal.get()};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+
+    auto *pinnedSection = sectionItem(tree, QStringLiteral("pinned"));
+    auto *dateSection = sectionItem(tree, QStringLiteral("date"));
+    auto *deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(pinnedSection && dateSection && deletedSection);
+    QVERIFY(!pinnedSection->icon(0).isNull());
+    QVERIFY(!dateSection->icon(0).isNull());
+    QVERIFY(!deletedSection->icon(0).isNull());
+
+    // Pinned: newest activity first, and only pinned chats.
+    QCOMPARE(pinnedSection->childCount(), 2);
+    QCOMPARE(pinnedSection->child(0)->text(0), QStringLiteral("pinned new"));
+    QCOMPARE(pinnedSection->child(1)->text(0), QStringLiteral("pinned old"));
+
+    // Deleted: newest deletion first.
+    QCOMPARE(deletedSection->childCount(), 2);
+    QCOMPARE(deletedSection->child(0)->text(0), QStringLiteral("deleted new"));
+    QCOMPARE(deletedSection->child(1)->text(0), QStringLiteral("deleted old"));
+
+    // Only the normal chat is in the date-based groups.
+    auto *todayGroup = groupItem(tree, now);
+    QVERIFY(todayGroup);
+    QCOMPARE(todayGroup->childCount(), 1);
+    QCOMPARE(todayGroup->child(0)->text(0), QStringLiteral("normal chat"));
+    QCOMPARE(countChatItems(tree), 5);
+}
+
+// The "Topic" section lists one item per topic (with the folder icon);
+// chats assigned to a topic appear under that topic only — not in the date
+// groups and not under "Pinned".
+void TestSidebar::topicsSectionListsChatsUnderTheirTopic() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto inTopic = makeSession(QStringLiteral("topic chat"), now);
+    inTopic->setTopicId(QStringLiteral("t1"));
+    auto pinned = makeSession(QStringLiteral("pinned chat"), now);
+    pinned->setPinned(true);
+    auto plain = makeSession(QStringLiteral("plain chat"), now);
+    const QVector<ChatSession *> sessions{inTopic.get(), pinned.get(), plain.get()};
+    const QVector<StoredTopic> topics{
+        StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")},
+        StoredTopic{.id = QStringLiteral("t2"), .name = QStringLiteral("Work")}};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+    sidebar.setTopics(topics);
+
+    auto *topicsSection = sectionItem(tree, QStringLiteral("topics"));
+    QVERIFY(topicsSection);
+    QVERIFY(!topicsSection->icon(0).isNull());
+    QCOMPARE(topicsSection->childCount(), 2);
+    auto *t1 = topicItem(tree, QStringLiteral("t1"));
+    auto *t2 = topicItem(tree, QStringLiteral("t2"));
+    QVERIFY(t1 && t2);
+    QCOMPARE(t1->text(0), QStringLiteral("Research"));
+    QCOMPARE(t2->text(0), QStringLiteral("Work"));
+    QVERIFY(!t1->icon(0).isNull());
+    QCOMPARE(t1->childCount(), 1);
+    QCOMPARE(t1->child(0)->text(0), QStringLiteral("topic chat"));
+    QCOMPARE(t1->child(0)->data(0, kTopicIdRole).toString(), QStringLiteral("t1"));
+    QCOMPARE(t2->childCount(), 0);
+
+    // The topic chat is neither in the date groups nor under "Pinned".
+    auto *todayGroup = groupItem(tree, now);
+    QVERIFY(todayGroup);
+    QCOMPARE(todayGroup->childCount(), 1);
+    QCOMPARE(todayGroup->child(0)->text(0), QStringLiteral("plain chat"));
+    auto *pinnedSection = sectionItem(tree, QStringLiteral("pinned"));
+    QVERIFY(pinnedSection);
+    QCOMPARE(pinnedSection->childCount(), 1);
+    QCOMPARE(pinnedSection->child(0)->text(0), QStringLiteral("pinned chat"));
+    QCOMPARE(countChatItems(tree), 3);
+}
+
+// "Deleted" starts collapsed on the first build, and a rebuild after a chat
+// was deleted does not expand it either (only the user can).
+void TestSidebar::deletedSectionNotExpandedOnFirstBuildOrAfterDelete() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto plain = makeSession(QStringLiteral("plain chat"), now);
+    const QVector<ChatSession *> sessions{plain.get()};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+    auto *deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(deletedSection);
+    QVERIFY(!deletedSection->isExpanded());
+
+    // Soft-delete the chat: the rebuild must not expand "Deleted".
+    plain->setDeletedAt(now);
+    sidebar.setSessions(sessions);
+    deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(deletedSection);
+    QVERIFY(!deletedSection->isExpanded());
+    QCOMPARE(deletedSection->childCount(), 1);
+
+    // Expanding it manually is preserved across rebuilds.
+    deletedSection->setExpanded(true);
+    sidebar.setSessions(sessions);
+    deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(deletedSection->isExpanded());
+}
+
+// Right-clicking the "Topic" section header offers "New topic".
+void TestSidebar::contextMenuTopicHeaderCreatesTopic() {
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions({});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
+
+    auto *topicsSection = sectionItem(tree, QStringLiteral("topics"));
+    QVERIFY(topicsSection);
+    QSignalSpy spy(&sidebar, &Sidebar::topicCreateRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, topicsSection, {QStringLiteral("New topic")}));
+    QCOMPARE(spy.count(), 1);
+}
+
+// Right-clicking a topic offers "New topic", "Rename topic" and
+// "Delete topic"; rename/delete carry the topic id.
+void TestSidebar::contextMenuTopicItemRenamesAndDeletes() {
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions({});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
+
+    auto *t1 = topicItem(tree, QStringLiteral("t1"));
+    QVERIFY(t1);
+
+    QSignalSpy renameSpy(&sidebar, &Sidebar::topicRenameRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, t1, {QStringLiteral("Rename topic")}));
+    QCOMPARE(renameSpy.count(), 1);
+    QCOMPARE(renameSpy.takeFirst().at(0).toString(), QStringLiteral("t1"));
+
+    QSignalSpy deleteSpy(&sidebar, &Sidebar::topicDeleteRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, t1, {QStringLiteral("Delete topic")}));
+    QCOMPARE(deleteSpy.count(), 1);
+    QCOMPARE(deleteSpy.takeFirst().at(0).toString(), QStringLiteral("t1"));
+
+    QSignalSpy createSpy(&sidebar, &Sidebar::topicCreateRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, t1, {QStringLiteral("New topic")}));
+    QCOMPARE(createSpy.count(), 1);
+}
+
+// A chat inside a topic gets "Pin chat", "Rename", "Move to topic"
+// (submenu), "Remove from topic" and "Delete chat".
+void TestSidebar::contextMenuChatInTopic() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto chat = makeSession(QStringLiteral("topic chat"), now);
+    chat->setTopicId(QStringLiteral("t1"));
+
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions({chat.get()});
+    sidebar.setTopics({StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")},
+                       StoredTopic{.id = QStringLiteral("t2"), .name = QStringLiteral("Work")}});
+    auto *t1 = topicItem(tree, QStringLiteral("t1"));
+    QVERIFY(t1);
+    t1->setExpanded(true);
+    auto *item = chatItem(tree, chat->id());
+    QVERIFY(item);
+
+    QSignalSpy pinSpy(&sidebar, &Sidebar::sessionPinToggled);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Pin chat")}));
+    QCOMPARE(pinSpy.count(), 1);
+    QCOMPARE(pinSpy.takeFirst().at(0).value<QUuid>(), chat->id());
+
+    QSignalSpy renameSpy(&sidebar, &Sidebar::sessionRenameRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Rename")}));
+    QCOMPARE(renameSpy.count(), 1);
+    QCOMPARE(renameSpy.takeFirst().at(0).value<QUuid>(), chat->id());
+
+    QSignalSpy moveSpy(&sidebar, &Sidebar::sessionMoveToTopicRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item,
+                                     {QStringLiteral("Move to topic"), QStringLiteral("Work")}));
+    QCOMPARE(moveSpy.count(), 1);
+    const auto moveArgs = moveSpy.takeFirst();
+    QCOMPARE(moveArgs.at(0).value<QUuid>(), chat->id());
+    QCOMPARE(moveArgs.at(1).toString(), QStringLiteral("t2"));
+
+    QSignalSpy removeSpy(&sidebar, &Sidebar::sessionRemoveFromTopicRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Remove from topic")}));
+    QCOMPARE(removeSpy.count(), 1);
+    QCOMPARE(removeSpy.takeFirst().at(0).value<QUuid>(), chat->id());
+
+    QSignalSpy deleteSpy(&sidebar, &Sidebar::sessionDeleteRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Delete chat")}));
+    QCOMPARE(deleteSpy.count(), 1);
+    QVERIFY(deleteSpy.takeFirst().at(0).value<QList<QUuid>>().contains(chat->id()));
+}
+
+// Chats under "Date"/"Pinned" get "Rename" and "Move to topic" as well (plus
+// Pin/Unpin and Delete) — but no "Remove from topic".
+void TestSidebar::contextMenuChatInDateAndPinnedHasRenameAndMoveToTopic() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto dated = makeSession(QStringLiteral("date chat"), now);
+    auto pinned = makeSession(QStringLiteral("pinned chat"), now);
+    pinned->setPinned(true);
+
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions({dated.get(), pinned.get()});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
+
+    auto *dateItem = chatItem(tree, dated->id());
+    QVERIFY(dateItem);
+    QVERIFY(contextMenuAction(&sidebar, tree, dateItem, {QStringLiteral("Rename")}));
+    QVERIFY(contextMenuAction(&sidebar, tree, dateItem,
+                              {QStringLiteral("Move to topic"), QStringLiteral("Research")}));
+    QVERIFY(contextMenuAction(&sidebar, tree, dateItem, {QStringLiteral("Pin chat")}));
+    QVERIFY(!contextMenuAction(&sidebar, tree, dateItem, {QStringLiteral("Remove from topic")}));
+
+    QSignalSpy moveSpy(&sidebar, &Sidebar::sessionMoveToTopicRequested);
+    QVERIFY(triggerContextMenuAction(
+        &sidebar, tree, dateItem, {QStringLiteral("Move to topic"), QStringLiteral("Research")}));
+    QCOMPARE(moveSpy.count(), 1);
+    QCOMPARE(moveSpy.takeFirst().at(1).toString(), QStringLiteral("t1"));
+
+    auto *pinnedItem = chatItem(tree, pinned->id());
+    QVERIFY(pinnedItem);
+    QVERIFY(contextMenuAction(&sidebar, tree, pinnedItem, {QStringLiteral("Unpin chat")}));
+    QVERIFY(contextMenuAction(&sidebar, tree, pinnedItem, {QStringLiteral("Rename")}));
+    QVERIFY(contextMenuAction(&sidebar, tree, pinnedItem,
+                              {QStringLiteral("Move to topic"), QStringLiteral("Research")}));
+}
+
+// Chats under "Deleted" get "Rename" and "Move to topic" in addition to
+// "Restore" and "Permanently delete".
+void TestSidebar::contextMenuChatInDeleted() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto chat = makeSession(QStringLiteral("deleted chat"), now);
+    chat->setDeletedAt(now);
+
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions({chat.get()});
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
+    auto *deletedSection = sectionItem(tree, QStringLiteral("deleted"));
+    QVERIFY(deletedSection);
+    deletedSection->setExpanded(true);
+    auto *item = chatItem(tree, chat->id());
+    QVERIFY(item);
+
+    QSignalSpy renameSpy(&sidebar, &Sidebar::sessionRenameRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Rename")}));
+    QCOMPARE(renameSpy.count(), 1);
+
+    QSignalSpy moveSpy(&sidebar, &Sidebar::sessionMoveToTopicRequested);
+    QVERIFY(triggerContextMenuAction(
+        &sidebar, tree, item, {QStringLiteral("Move to topic"), QStringLiteral("Research")}));
+    QCOMPARE(moveSpy.count(), 1);
+    QCOMPARE(moveSpy.takeFirst().at(1).toString(), QStringLiteral("t1"));
+
+    QSignalSpy restoreSpy(&sidebar, &Sidebar::sessionRestoreRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Restore")}));
+    QCOMPARE(restoreSpy.count(), 1);
+    QVERIFY(restoreSpy.takeFirst().at(0).value<QList<QUuid>>().contains(chat->id()));
+
+    QSignalSpy permSpy(&sidebar, &Sidebar::sessionPermanentDeleteRequested);
+    QVERIFY(triggerContextMenuAction(&sidebar, tree, item, {QStringLiteral("Permanently delete")}));
+    QCOMPARE(permSpy.count(), 1);
+    QVERIFY(permSpy.takeFirst().at(0).value<QList<QUuid>>().contains(chat->id()));
+}
+
+// The "Move to topic" submenu lists all topics; the topic the chat is
+// already in is disabled.
+void TestSidebar::moveToTopicSubmenuListsTopicsAndDisablesCurrent() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto chat = makeSession(QStringLiteral("topic chat"), now);
+    chat->setTopicId(QStringLiteral("t1"));
+
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions({chat.get()});
+    sidebar.setTopics({StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")},
+                       StoredTopic{.id = QStringLiteral("t2"), .name = QStringLiteral("Work")}});
+    auto *t1 = topicItem(tree, QStringLiteral("t1"));
+    QVERIFY(t1);
+    t1->setExpanded(true);
+    auto *item = chatItem(tree, chat->id());
+    QVERIFY(item);
+
+    bool currentEnabled = true;
+    QVERIFY(contextMenuAction(&sidebar, tree, item,
+                              {QStringLiteral("Move to topic"), QStringLiteral("Research")},
+                              &currentEnabled));
+    QVERIFY(!currentEnabled); // the chat's current topic is disabled
+    bool otherEnabled = false;
+    QVERIFY(contextMenuAction(&sidebar, tree, item,
+                              {QStringLiteral("Move to topic"), QStringLiteral("Work")},
+                              &otherEnabled));
+    QVERIFY(otherEnabled);
+}
+
+// Drag&drop: dropping a chat onto a topic/section emits sessionsDropped with
+// the target section (and topic id for topic items).
+void TestSidebar::dropChatOntoSectionsAndTopics() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto chat = makeSession(QStringLiteral("chat"), now);
+    const QVector<ChatSession *> sessions{chat.get()};
+
+    Sidebar sidebar;
+    sidebar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&sidebar));
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+    sidebar.setTopics(
+        {StoredTopic{.id = QStringLiteral("t1"), .name = QStringLiteral("Research")}});
+    auto *item = chatItem(tree, chat->id());
+    QVERIFY(item);
+    auto *t1 = topicItem(tree, QStringLiteral("t1"));
+    QVERIFY(t1);
+    t1->setExpanded(true);
+
+    QSignalSpy spy(&sidebar, &Sidebar::sessionsDropped);
+
+    dropOn(sidebar, tree, item, t1);
+    QCOMPARE(spy.count(), 1);
+    auto args = spy.takeFirst();
+    QCOMPARE(args.at(0).value<QList<QUuid>>(), QList<QUuid>{chat->id()});
+    QCOMPARE(args.at(1).toString(), QStringLiteral("topics"));
+    QCOMPARE(args.at(2).toString(), QStringLiteral("t1"));
+
+    dropOn(sidebar, tree, item, sectionItem(tree, QStringLiteral("pinned")));
+    QCOMPARE(spy.count(), 1);
+    args = spy.takeFirst();
+    QCOMPARE(args.at(0).value<QList<QUuid>>(), QList<QUuid>{chat->id()});
+    QCOMPARE(args.at(1).toString(), QStringLiteral("pinned"));
+    QVERIFY(args.at(2).toString().isEmpty());
+
+    dropOn(sidebar, tree, item, groupItem(tree, now));
+    QCOMPARE(spy.count(), 1);
+    args = spy.takeFirst();
+    QCOMPARE(args.at(1).toString(), QStringLiteral("date"));
+
+    dropOn(sidebar, tree, item, sectionItem(tree, QStringLiteral("topics")));
+    QCOMPARE(spy.count(), 1);
+    args = spy.takeFirst();
+    QCOMPARE(args.at(1).toString(), QStringLiteral("topics"));
+    QVERIFY(args.at(2).toString().isEmpty()); // the "Topic" header: leave topic
+
+    dropOn(sidebar, tree, item, sectionItem(tree, QStringLiteral("deleted")));
+    QCOMPARE(spy.count(), 1);
+    args = spy.takeFirst();
+    QCOMPARE(args.at(1).toString(), QStringLiteral("deleted"));
+}
+
+// Chats in the "Deleted" section are not offered for another (soft) delete.
+void TestSidebar::deletableSelectionExcludesDeletedChats() {
+    const QDateTime now = QDateTime::currentDateTime();
+    auto deleted = makeSession(QStringLiteral("deleted chat"), now);
+    deleted->setDeletedAt(now.addDays(-1));
+    auto plain = makeSession(QStringLiteral("plain chat"), now);
+    const QVector<ChatSession *> sessions{deleted.get(), plain.get()};
+
+    Sidebar sidebar;
+    auto *tree = sidebar.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    sidebar.setSessions(sessions);
+
+    tree->selectAll();
+    const QList<QUuid> deletable = sidebar.deletableSelectedSessionIds();
+    QCOMPARE(deletable.size(), 1);
+    QCOMPARE(deletable.first(), plain->id());
 }
 
 // Ctrl+click adds to the selection, Shift+click selects a range, and a
@@ -441,8 +1027,9 @@ void TestSidebar::selectSessionClearsMultiSelection() {
     sidebar.setSessions(sessions);
 
     tree->selectAll();
-    // 3 chats plus the group header.
-    QCOMPARE(tree->selectedItems().size(), 4);
+    // 3 chats plus the section headers (Pinned, Date, Topic, Deleted) and
+    // the time group below "Date".
+    QCOMPARE(tree->selectedItems().size(), 8);
 
     sidebar.selectSession(s1->id());
     QCOMPARE(tree->selectedItems().size(), 1);

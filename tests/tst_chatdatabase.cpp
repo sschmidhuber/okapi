@@ -33,6 +33,12 @@ private slots:
     void setSessionDraftUpdatesDraftOnly();
     void updateSessionPersistsDraft();
     void migratesLegacySchemaWithoutDraft();
+    void sessionPinnedRoundTrip();
+    void sessionDeletedAtRoundTrip();
+    void sessionTopicRoundTrip();
+    void topicsCrud();
+    void deleteTopicClearsSessionAssignment();
+    void deleteSessionsDeletedBeforePurgesOnlyOldDeleted();
     void backendRoundTrip();
     void backendUpdateOverwritesEntry();
     void backendDeleteRemovesEntry();
@@ -305,9 +311,113 @@ void TestChatDatabase::migratesLegacySchemaWithoutDraft() {
     QCOMPARE(loaded.size(), 1);
     QCOMPARE(loaded.first().title, QStringLiteral("legacy chat"));
     QCOMPARE(loaded.first().draft, QString());
+    QCOMPARE(loaded.first().topicId, QString());
     // Writes after the migration persist the draft.
     QVERIFY(db().setSessionDraft(QStringLiteral("legacy-1"), QStringLiteral("hello")));
     QCOMPARE(db().loadSessions().first().draft, QStringLiteral("hello"));
+    // ... and the topic assignment.
+    QVERIFY(db().setSessionTopic(QStringLiteral("legacy-1"), QStringLiteral("topic-1")));
+    QCOMPARE(db().loadSessions().first().topicId, QStringLiteral("topic-1"));
+}
+
+void TestChatDatabase::sessionPinnedRoundTrip() {
+    ChatSession session(QStringLiteral("Chat"), QStringLiteral("backend-1"));
+    QVERIFY(db().insertSession(session));
+    auto loaded = db().loadSessions();
+    QCOMPARE(loaded.size(), 1);
+    QVERIFY(!loaded.first().pinned);
+    QVERIFY(db().setSessionPinned(session.id().toString(QUuid::WithoutBraces), true));
+    loaded = db().loadSessions();
+    QVERIFY(loaded.first().pinned);
+    // updateSession carries the flag as well.
+    session.setPinned(false);
+    QVERIFY(db().updateSession(session));
+    QVERIFY(!db().loadSessions().first().pinned);
+}
+
+void TestChatDatabase::sessionDeletedAtRoundTrip() {
+    ChatSession session(QStringLiteral("Chat"), QStringLiteral("backend-1"));
+    QVERIFY(db().insertSession(session));
+    const auto id = session.id().toString(QUuid::WithoutBraces);
+    QVERIFY(!db().loadSessions().first().deletedAt.isValid());
+    const QDateTime deleted = QDateTime::currentDateTime().addDays(-3);
+    QVERIFY(db().setSessionDeletedAt(id, deleted));
+    auto loaded = db().loadSessions();
+    QVERIFY(loaded.first().deletedAt.isValid());
+    QCOMPARE(loaded.first().deletedAt.toSecsSinceEpoch(), deleted.toSecsSinceEpoch());
+    // Restoring clears the marker again.
+    QVERIFY(db().setSessionDeletedAt(id, QDateTime()));
+    QVERIFY(!db().loadSessions().first().deletedAt.isValid());
+}
+
+void TestChatDatabase::sessionTopicRoundTrip() {
+    ChatSession session(QStringLiteral("Chat"), QStringLiteral("backend-1"));
+    QVERIFY(db().insertSession(session));
+    const auto id = session.id().toString(QUuid::WithoutBraces);
+    QCOMPARE(db().loadSessions().first().topicId, QString());
+    QVERIFY(db().setSessionTopic(id, QStringLiteral("topic-1")));
+    QCOMPARE(db().loadSessions().first().topicId, QStringLiteral("topic-1"));
+    // updateSession carries the topic as well.
+    session.setTopicId(QStringLiteral("topic-2"));
+    QVERIFY(db().updateSession(session));
+    QCOMPARE(db().loadSessions().first().topicId, QStringLiteral("topic-2"));
+    // Clearing (null or empty) removes the assignment.
+    QVERIFY(db().setSessionTopic(id, QString()));
+    QCOMPARE(db().loadSessions().first().topicId, QString());
+}
+
+void TestChatDatabase::topicsCrud() {
+    QVERIFY(db().loadTopics().isEmpty());
+    QVERIFY(db().insertTopic(QStringLiteral("t1"), QStringLiteral("Research")));
+    QVERIFY(db().insertTopic(QStringLiteral("t2"), QStringLiteral("Work")));
+    auto topics = db().loadTopics();
+    QCOMPARE(topics.size(), 2);
+    // Topics come back in creation order.
+    QCOMPARE(topics.at(0).id, QStringLiteral("t1"));
+    QCOMPARE(topics.at(0).name, QStringLiteral("Research"));
+    QCOMPARE(topics.at(1).id, QStringLiteral("t2"));
+    QCOMPARE(topics.at(1).name, QStringLiteral("Work"));
+    QVERIFY(db().renameTopic(QStringLiteral("t1"), QStringLiteral("Science")));
+    topics = db().loadTopics();
+    QCOMPARE(topics.size(), 2);
+    QCOMPARE(topics.at(0).name, QStringLiteral("Science"));
+    QVERIFY(db().deleteTopic(QStringLiteral("t1")));
+    topics = db().loadTopics();
+    QCOMPARE(topics.size(), 1);
+    QCOMPARE(topics.at(0).id, QStringLiteral("t2"));
+}
+
+void TestChatDatabase::deleteTopicClearsSessionAssignment() {
+    ChatSession session(QStringLiteral("Chat"), QStringLiteral("backend-1"));
+    QVERIFY(db().insertSession(session));
+    const auto id = session.id().toString(QUuid::WithoutBraces);
+    QVERIFY(db().insertTopic(QStringLiteral("t1"), QStringLiteral("Research")));
+    QVERIFY(db().setSessionTopic(id, QStringLiteral("t1")));
+    QCOMPARE(db().loadSessions().first().topicId, QStringLiteral("t1"));
+    // Deleting the topic keeps the chat but removes its topic assignment.
+    QVERIFY(db().deleteTopic(QStringLiteral("t1")));
+    QVERIFY(db().loadTopics().isEmpty());
+    QCOMPARE(db().loadSessions().first().topicId, QString());
+    QVERIFY(db().sessionIds().contains(id));
+}
+
+void TestChatDatabase::deleteSessionsDeletedBeforePurgesOnlyOldDeleted() {
+    ChatSession recent(QStringLiteral("recently deleted"), QStringLiteral("b"));
+    ChatSession old(QStringLiteral("long deleted"), QStringLiteral("b"));
+    ChatSession active(QStringLiteral("active"), QStringLiteral("b"));
+    QVERIFY(db().insertSession(recent));
+    QVERIFY(db().insertSession(old));
+    QVERIFY(db().insertSession(active));
+    const QDateTime now = QDateTime::currentDateTime();
+    QVERIFY(db().setSessionDeletedAt(recent.id().toString(QUuid::WithoutBraces), now.addDays(-5)));
+    QVERIFY(db().setSessionDeletedAt(old.id().toString(QUuid::WithoutBraces), now.addDays(-40)));
+    const int removed = db().deleteSessionsDeletedBefore(now.addDays(-30));
+    QCOMPARE(removed, 1);
+    const auto ids = db().sessionIds();
+    QCOMPARE(ids.size(), 2);
+    QVERIFY(!ids.contains(old.id().toString(QUuid::WithoutBraces)));
+    QVERIFY(ids.contains(recent.id().toString(QUuid::WithoutBraces)));
+    QVERIFY(ids.contains(active.id().toString(QUuid::WithoutBraces)));
 }
 
 void TestChatDatabase::backendRoundTrip() {
