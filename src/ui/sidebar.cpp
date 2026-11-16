@@ -333,16 +333,16 @@ void Sidebar::rebuildTree() {
     for (auto *session : pinned)
         makeChatItem(pinnedSection, session);
 
-    auto *dateSection = makeSection(QStringLiteral("date"), tr("Date"),
-                                    QStringLiteral(":/resources/icons/date-symbolic.svg"),
-                                    sectionExpanded(QStringLiteral("date")));
-    buildDateSection(dateSection, dated, firstBuild, expandedKeys);
-
     auto *topicsSection =
         makeSection(QStringLiteral("topics"), tr("Topic"),
                     QStringLiteral(":/resources/icons/document-open-folder-symbolic.svg"),
                     sectionExpanded(QStringLiteral("topics")));
     buildTopicsSection(topicsSection, byTopic, firstBuild, expandedKeys);
+
+    auto *dateSection = makeSection(QStringLiteral("date"), tr("Date"),
+                                    QStringLiteral(":/resources/icons/date-symbolic.svg"),
+                                    sectionExpanded(QStringLiteral("date")));
+    buildDateSection(dateSection, dated, firstBuild, expandedKeys);
 
     auto *deletedSection =
         makeSection(QStringLiteral("deleted"), tr("Deleted"),

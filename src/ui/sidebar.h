@@ -19,10 +19,10 @@ namespace okapi {
 class ChatSession;
 
 // The chat history panel: a tree with four top-level sections — "Pinned"
-// (chats the user pinned, newest activity first), "Date" (all other chats,
-// grouped by their last activity time: Today, Yesterday, weekday, date,
-// month, year), "Topic" (user-created topics, each listing its chats) and
-// "Deleted" (soft-deleted chats, newest deletion first; never expanded
+// (chats the user pinned, newest activity first), "Topic" (user-created
+// topics, each listing its chats), "Date" (all other chats, grouped by
+// their last activity time: Today, Yesterday, weekday, date, month, year)
+// and "Deleted" (soft-deleted chats, newest deletion first; never expanded
 // automatically). The toolbar actions (new chat, settings) live in the
 // main window's toolbar. Chats can be multi-selected (Ctrl+click adds to
 // the selection, Shift+click selects a range, selecting a group header

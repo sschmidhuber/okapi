@@ -228,13 +228,13 @@ void TestSidebar::firstBuildExpandsOnlyToday() {
     // The four top-level sections are always present, in this order.
     QCOMPARE(tree->topLevelItemCount(), 4);
     QCOMPARE(tree->topLevelItem(0)->text(0), QStringLiteral("Pinned"));
-    QCOMPARE(tree->topLevelItem(1)->text(0), QStringLiteral("Date"));
-    QCOMPARE(tree->topLevelItem(2)->text(0), QStringLiteral("Topic"));
+    QCOMPARE(tree->topLevelItem(1)->text(0), QStringLiteral("Topic"));
+    QCOMPARE(tree->topLevelItem(2)->text(0), QStringLiteral("Date"));
     QCOMPARE(tree->topLevelItem(3)->text(0), QStringLiteral("Deleted"));
     // Every section carries its icon; "Deleted" starts collapsed.
     for (int i = 0; i < 4; ++i)
         QVERIFY(!tree->topLevelItem(i)->icon(0).isNull());
-    QVERIFY(tree->topLevelItem(2)->isExpanded());
+    QVERIFY(tree->topLevelItem(1)->isExpanded());
     QVERIFY(!tree->topLevelItem(3)->isExpanded());
     auto *todayGroup = groupItem(tree, now);
     auto *yesterdayGroup = groupItem(tree, now.addDays(-1));
