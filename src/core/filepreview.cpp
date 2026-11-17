@@ -54,7 +54,11 @@ QImage iconTile(FileCategory category, int size) {
     QPainter painter(&tile);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    qreal x = 0, y = 0, pageWidth = 0, pageHeight = 0, fold = 0;
+    qreal x = 0;
+    qreal y = 0;
+    qreal pageWidth = 0;
+    qreal pageHeight = 0;
+    qreal fold = 0;
     drawPage(painter, size, x, y, pageWidth, pageHeight, fold);
 
     const QString badge = FilePreview::badgeForCategory(category);
@@ -116,7 +120,11 @@ QImage textTile(int size) {
     QPainter painter(&tile);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    qreal x = 0, y = 0, pageWidth = 0, pageHeight = 0, fold = 0;
+    qreal x = 0;
+    qreal y = 0;
+    qreal pageWidth = 0;
+    qreal pageHeight = 0;
+    qreal fold = 0;
     drawPage(painter, size, x, y, pageWidth, pageHeight, fold);
 
     // Text lines strictly inside the page bounds.

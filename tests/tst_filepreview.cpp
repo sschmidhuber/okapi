@@ -142,7 +142,10 @@ void TestFilePreview::thumbnailForTextFileUsesPageIconWithoutOverflow() {
     QCOMPARE(qMax(image.width(), image.height()), 96);
 
     // Bounding box of all visible (non-transparent) pixels.
-    int minX = image.width(), minY = image.height(), maxX = -1, maxY = -1;
+    int minX = image.width();
+    int minY = image.height();
+    int maxX = -1;
+    int maxY = -1;
     int linePixels = 0;
     for (int y = 0; y < image.height(); ++y) {
         for (int x = 0; x < image.width(); ++x) {
