@@ -102,22 +102,25 @@ attached to chat messages. HTML files are converted to readable text
 are recognized with Tesseract OCR; Office documents are unpacked with
 libarchive and their XML text runs are read with QXmlStreamReader. Text files
 are detected by content (UTF-8, printable characters) regardless of their
-extension. Poppler, Tesseract and libarchive are optional at build time
-(detected via pkg-config) — the features are disabled gracefully when they
-are missing.
+extension. Poppler, Tesseract, libarchive and KSyntaxHighlighting (KF6) are
+optional at build time (detected via CMake config or pkg-config) — the
+features are disabled gracefully when they are missing.
 
 Attached files are rendered as thumbnail chips in the composer and in the
 chat history: PDFs show a preview of their first page (rendered with
 Poppler), office documents show the first-page preview embedded in the
 package (docProps/thumbnail.jpeg for OOXML, Thumbnails/thumbnail.png for
-ODF), and text files show a page tile with their first lines of content.
-Archives and e-mails show a colored icon tile with a type badge. The
-thumbnails are stored alongside the message in the chat database.
+ODF), and text files show an A4-shaped page with their word-wrapped,
+syntax-highlighted content (per-language highlighting via
+KSyntaxHighlighting when available, otherwise a built-in fallback
+highlighter). Archives and e-mails show a colored icon tile with a type
+badge. The thumbnails are stored alongside the message in the chat
+database.
 
 Install the dependencies, e.g. on Debian/Ubuntu:
 
 ```sh
-sudo apt install libpoppler-cpp-dev libtesseract-dev tesseract-ocr-eng libarchive-dev
+sudo apt install libpoppler-cpp-dev libtesseract-dev tesseract-ocr-eng libarchive-dev libkf6syntaxhighlighting-dev
 ```
 
 ## Building

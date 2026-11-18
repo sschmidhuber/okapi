@@ -20,6 +20,20 @@ else()
     message(WARNING "libarchive not found: MS Office support disabled")
 endif()
 
+# KSyntaxHighlighting (KF6) gives text file thumbnails full per-language
+# syntax highlighting; without it a built-in fallback highlighter is used.
+# Prefer the CMake package config (shipped by the KDE Flatpak runtime), fall
+# back to pkg-config for distro packages.
+find_package(KF6SyntaxHighlighting QUIET)
+if(NOT KF6SyntaxHighlighting_FOUND AND PkgConfig_FOUND)
+    pkg_check_modules(KSYNTAXHIGHLIGHTING QUIET KF6SyntaxHighlighting)
+endif()
+if(KF6SyntaxHighlighting_FOUND OR KSYNTAXHIGHLIGHTING_FOUND)
+    message(STATUS "KF6SyntaxHighlighting found: syntax highlighting in text thumbnails enabled")
+else()
+    message(WARNING "KF6SyntaxHighlighting not found: text thumbnails use the built-in fallback highlighter")
+endif()
+
 set(OKAPI_CORE_SOURCES
     core/message.h
     core/imagemessage.h
@@ -127,6 +141,15 @@ if(LIBARCHIVE_FOUND)
     target_include_directories(okapi-core PUBLIC ${LIBARCHIVE_INCLUDE_DIRS})
     target_link_directories(okapi-core PUBLIC ${LIBARCHIVE_LIBRARY_DIRS})
     target_link_libraries(okapi-core PUBLIC ${LIBARCHIVE_LIBRARIES})
+endif()
+if(KF6SyntaxHighlighting_FOUND)
+    target_compile_definitions(okapi-core PUBLIC OKAPI_HAVE_KSYNTAXHIGHLIGHTING=1)
+    target_link_libraries(okapi-core PUBLIC KF6::SyntaxHighlighting)
+elseif(KSYNTAXHIGHLIGHTING_FOUND)
+    target_compile_definitions(okapi-core PUBLIC OKAPI_HAVE_KSYNTAXHIGHLIGHTING=1)
+    target_include_directories(okapi-core PUBLIC ${KSYNTAXHIGHLIGHTING_INCLUDE_DIRS})
+    target_link_directories(okapi-core PUBLIC ${KSYNTAXHIGHLIGHTING_LIBRARY_DIRS})
+    target_link_libraries(okapi-core PUBLIC ${KSYNTAXHIGHLIGHTING_LIBRARIES})
 endif()
 
 set(OKAPI_UI_SOURCES

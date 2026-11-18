@@ -16,6 +16,9 @@ private slots:
     void badgeForCategoryCoversCategories();
     void thumbnailForTextFileIsValidPng();
     void thumbnailForTextFileShowsContent();
+    void thumbnailForTextFileHasPageShape();
+    void thumbnailForTextFileWrapsTextInsidePage();
+    void thumbnailForTextFileSyntaxHighlighting();
     void thumbnailForOfficeWithEmbeddedPreview();
     void thumbnailForOdfWithEmbeddedPreview();
     void thumbnailForOfficeWithoutEmbeddedPreviewFallsBackToIcon();
@@ -136,16 +139,93 @@ void TestFilePreview::thumbnailForTextFileShowsContent() {
     QVERIFY(!thumbnail.isEmpty());
     const QImage image = decodePng(thumbnail);
     QVERIFY(!image.isNull());
-    // Scan the page area for dark (text) pixels.
+    // Scan the page for text pixels. The page is rendered at 2x and smoothly
+    // downscaled, so small antialiased glyphs end up mid-gray; the threshold
+    // only has to separate them from the white page and the light border.
     int darkPixels = 0;
     for (int y = 0; y < image.height(); ++y) {
         for (int x = 0; x < image.width(); ++x) {
             const QColor c = image.pixelColor(x, y);
-            if (c.red() < 100 && c.green() < 100 && c.blue() < 100)
+            if (c.alpha() > 200 && c.red() < 160 && c.green() < 160 && c.blue() < 160)
                 ++darkPixels;
         }
     }
-    QVERIFY(darkPixels > 20);
+    QVERIFY(darkPixels > 10);
+}
+
+void TestFilePreview::thumbnailForTextFileHasPageShape() {
+    // Text thumbnails use the same page representation as PDFs: a portrait
+    // A4-shaped page whose longest edge is maxEdge, not a square tile with
+    // a folded corner.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("notes.txt"));
+    writeFile(path, "hello world\nsecond line\n");
+
+    const QByteArray thumbnail = FilePreview::thumbnailForFile(path, 96);
+    QVERIFY(!thumbnail.isEmpty());
+    const QImage image = decodePng(thumbnail);
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.height(), 96);
+    QVERIFY(image.height() > image.width());
+    const qreal ratio = static_cast<qreal>(image.height()) / image.width();
+    QVERIFY(qAbs(ratio - 1.41421356) < 0.05);
+}
+
+void TestFilePreview::thumbnailForTextFileWrapsTextInsidePage() {
+    // Even a single very long unbroken line must wrap and stay inside the
+    // page margins instead of overflowing the page edge.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("long.txt"));
+    writeFile(path, QByteArray(500, 'x')); // one unbroken line
+
+    const QByteArray thumbnail = FilePreview::thumbnailForFile(path, 96);
+    QVERIFY(!thumbnail.isEmpty());
+    const QImage image = decodePng(thumbnail);
+    QVERIFY(!image.isNull());
+    // No dark text pixels in the outer 3 px of the page (the page margin is
+    // ~9% of the width, i.e. ~6 px at this size).
+    int edgeTextPixels = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            if (x < image.width() - 3 && y < image.height() - 3)
+                continue;
+            const QColor c = image.pixelColor(x, y);
+            if (c.alpha() > 200 && c.red() < 160 && c.green() < 160 && c.blue() < 160)
+                ++edgeTextPixels;
+        }
+    }
+    QCOMPARE(edgeTextPixels, 0);
+}
+
+void TestFilePreview::thumbnailForTextFileSyntaxHighlighting() {
+    if (!FilePreview::hasSyntaxHighlighting())
+        QSKIP("KSyntaxHighlighting not available in this build");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("code.py"));
+    // The string literal is colored (red) by both KSyntaxHighlighting
+    // themes and the built-in fallback highlighter.
+    writeFile(path, "def hello():\n    print('hello world, a longer string')\n# a comment\n");
+
+    const QByteArray thumbnail = FilePreview::thumbnailForFile(path, 128);
+    QVERIFY(!thumbnail.isEmpty());
+    const QImage image = decodePng(thumbnail);
+    QVERIFY(!image.isNull());
+    // Syntax highlighting colors tokens: count saturated (non-gray) pixels.
+    int coloredPixels = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            const int hi = qMax(c.red(), qMax(c.green(), c.blue()));
+            const int lo = qMin(c.red(), qMin(c.green(), c.blue()));
+            if (c.alpha() > 200 && hi - lo > 60)
+                ++coloredPixels;
+        }
+    }
+    QVERIFY(coloredPixels > 10);
 }
 
 void TestFilePreview::thumbnailForOfficeWithEmbeddedPreview() {
