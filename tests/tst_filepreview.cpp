@@ -29,6 +29,7 @@ private slots:
     void thumbnailForMissingFileFallsBackToIcon();
     void thumbnailWithNonPositiveEdgeIsEmpty();
     void pdfThumbnailMatchesRenderFirstPdfPage();
+    void pdfThumbnailHasAntialiasedEdges();
 };
 
 void TestFilePreview::categoryForFileMapsExtensions() {
@@ -310,6 +311,48 @@ void TestFilePreview::thumbnailForMissingFileFallsBackToIcon() {
 void TestFilePreview::thumbnailWithNonPositiveEdgeIsEmpty() {
     QVERIFY(FilePreview::thumbnailForFile(QStringLiteral("notes.txt"), 0).isEmpty());
     QVERIFY(FilePreview::thumbnailForFile(QStringLiteral("notes.txt"), -5).isEmpty());
+}
+
+void TestFilePreview::pdfThumbnailHasAntialiasedEdges() {
+    if (!TextExtractor::hasPoppler())
+        QSKIP("Poppler not available in this build");
+    // A minimal single-page PDF with a thick black diagonal line.
+    const QByteArray content = QByteArrayLiteral("0 0 0 RG 8 w 10 10 m 190 190 l S\n");
+    QByteArray pdf =
+        QByteArrayLiteral("%PDF-1.4\n"
+                          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+                          "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+                          "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+                          "/Contents 4 0 R >>\nendobj\n"
+                          "4 0 obj\n<< /Length ");
+    pdf += QByteArray::number(content.size());
+    pdf += QByteArrayLiteral(" >>\nstream\n");
+    pdf += content;
+    pdf += QByteArrayLiteral("endstream\nendobj\ntrailer\n<< /Size 5 /Root 1 0 R >>\n%%EOF\n");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("line.pdf"));
+    writeFile(path, pdf);
+
+    const QByteArray thumbnail = FilePreview::thumbnailForFile(path, 96);
+    QVERIFY(!thumbnail.isEmpty());
+    const QImage image = decodePng(thumbnail);
+    QVERIFY(!image.isNull());
+    QCOMPARE(qMax(image.width(), image.height()), 96);
+    // Antialiased rendering (poppler hints + supersampled downscale) produces
+    // intermediate gray pixels along the line's edges; a hard-aliased render
+    // would be pure black and white only.
+    int grayPixels = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (c.alpha() > 200 && c.red() > 40 && c.red() < 215 && c.red() == c.green() &&
+                c.green() == c.blue())
+                ++grayPixels;
+        }
+    }
+    QVERIFY(grayPixels > 0);
 }
 
 void TestFilePreview::pdfThumbnailMatchesRenderFirstPdfPage() {

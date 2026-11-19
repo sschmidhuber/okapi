@@ -35,6 +35,10 @@ namespace {
 
 constexpr int kMaxAttachmentsPerMessage = 50;
 constexpr int kDocumentThumbSize = 128;
+// Document thumbnails are generated at 2x the display size, so the chip (and
+// the smaller file chips in the chat history) smoothly downscale and stay
+// crisp on HiDPI displays.
+constexpr int kDocumentThumbRenderSize = 2 * kDocumentThumbSize;
 constexpr int kDocumentChipPadding = 6;
 // Attachment chip: thumbnail on top, file name below it; the thumbnail keeps
 // its fixed size, the chip grows vertically to fit the name line.
@@ -540,7 +544,7 @@ void Composer::addDocument(const QString &path) {
     file.fileName = QFileInfo(path).fileName();
     file.mimeType = QStringLiteral("application/octet-stream");
     file.sourcePath = path;
-    file.thumbnail = FilePreview::thumbnailForFile(path, kDocumentThumbSize);
+    file.thumbnail = FilePreview::thumbnailForFile(path, kDocumentThumbRenderSize);
     file.extractedText = text.trimmed();
     m_documents.push_back(file);
     refreshAttachmentStrip();
