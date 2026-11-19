@@ -38,7 +38,8 @@ set(OKAPI_TESTS
     tst_audioformat
     tst_ttsclient
     tst_ttsplayer
-    tst_debuglog)
+    tst_debuglog
+    tst_uifiles)
 
 
 foreach(test_name ${OKAPI_TESTS})
@@ -46,6 +47,9 @@ foreach(test_name ${OKAPI_TESTS})
     target_link_libraries(${test_name} PRIVATE okapi-core Qt6::Test)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
+
+# tst_uifiles scans the .ui sources, so it needs the source dir at compile time.
+target_compile_definitions(tst_uifiles PRIVATE OKAPI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # The sidebar lives in the application target, so its test compiles the
 # source directly and links against Qt Widgets. It uses themedIcon() for the

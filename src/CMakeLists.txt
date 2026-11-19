@@ -197,12 +197,17 @@ set(OKAPI_UI_SOURCES
     ui/prompttemplatespage.ui
 )
 
+# The UI sources live in their own static library so that both the app and
+# the Qt Designer plugin (designer/) can link them.
+add_library(okapi-ui STATIC ${OKAPI_UI_SOURCES})
+target_include_directories(okapi-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(okapi-ui PUBLIC okapi-core Qt6::Widgets Qt6::WebEngineWidgets Qt6::WebChannel Qt6::Svg)
+
 qt_add_executable(okapi
     main.cpp
-    ${OKAPI_UI_SOURCES}
 )
 
-target_link_libraries(okapi PRIVATE okapi-core Qt6::Widgets Qt6::WebEngineWidgets Qt6::WebChannel Qt6::Svg)
+target_link_libraries(okapi PRIVATE okapi-ui)
 
 qt_add_resources(okapi "okapi_resources"
     PREFIX "/"

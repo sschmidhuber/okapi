@@ -11,6 +11,15 @@
 #include "ui/sidebar.h"
 #include "ui/theme.h"
 #include "ui/webchatview.h"
+
+// The generated ui_mainwindow.h refers to the promoted widgets by their plain
+// class names (Qt Designer cannot handle namespaced class names and drops
+// them on save), so make the okapi:: names visible at global scope here.
+using okapi::Composer;
+using okapi::ModelPickerButton;
+using okapi::Sidebar;
+using okapi::WebChatView;
+
 #include "ui_mainwindow.h"
 
 #include <QApplication>
@@ -352,17 +361,12 @@ void MainWindow::setupUi() {
     m_ui->mainSplitter->setStretchFactor(1, 1);
     m_composerColumn->setMinimumHeight(UiSettings::kMinComposerHeight);
 
-    // The composer's mic/attach buttons live in the footer row, right after
-    // the spacer (footerLayout already holds picker, spacer, speak, cancel,
-    // send, stop from the .ui file).
-    m_composer->micButton()->setParent(m_ui->footerRow);
-    m_composer->attachButton()->setParent(m_ui->footerRow);
-    m_ui->footerLayout->insertWidget(2, m_composer->micButton());
-    m_ui->footerLayout->insertWidget(3, m_composer->attachButton());
-
-    m_statusLabel = new QLabel(statusBar());
+    // The mic/attach buttons and the status bar labels are declared in
+    // mainwindow.ui; the composer adopts the buttons and wires its signals.
+    m_composer->adoptToolButtons(m_ui->attachButton, m_ui->micButton);
+    m_statusLabel = m_ui->statusLabel;
     statusBar()->addPermanentWidget(m_statusLabel);
-    m_mcpStatusLabel = new QLabel(statusBar());
+    m_mcpStatusLabel = m_ui->mcpStatusLabel;
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
     setStatusBase(tr("Ready"));
 }
