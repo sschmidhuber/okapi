@@ -9,7 +9,7 @@ if(NOT Qt6Designer_FOUND)
     return()
 endif()
 
-add_library(okapiwidgets MODULE okapiwidgetplugin.cpp)
+add_library(okapiwidgets MODULE okapiwidgetplugin.cpp okapiwidgetplugin.h)
 set_target_properties(okapiwidgets PROPERTIES PREFIX "")
 target_link_libraries(okapiwidgets PRIVATE okapi-ui Qt6::Designer)
 
