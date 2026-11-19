@@ -61,16 +61,28 @@ QImage renderPage(const poppler::page *page) {
     return image;
 }
 
-// Renders a page at a resolution so the longest page edge is maxEdge pixels.
+// Renders a page so its longest edge is maxEdge pixels. The page is rendered
+// at a higher resolution (supersampling, capped at kMaxRenderDpi) with
+// antialiasing enabled and then smoothly downscaled, so edges and text stay
+// crisp — image thumbnails get the same treatment by scaling down the
+// full-resolution decode.
 QImage renderPageScaled(const poppler::page *page, int maxEdge) {
     const poppler::rectf pageRect = page->page_rect();
     const double pageWidth = pageRect.width();
     const double pageHeight = pageRect.height();
     if (pageWidth <= 0.0 || pageHeight <= 0.0 || maxEdge <= 0)
         return {};
-    const qreal scale = static_cast<qreal>(maxEdge) / qMax(pageWidth, pageHeight);
-    const poppler::image rendered =
-        poppler::page_renderer().render_page(page, scale * 72.0, scale * 72.0);
+    constexpr double kSupersample = 4.0;
+    constexpr double kMaxRenderDpi = 200.0;
+    const double pageLongest = qMax(pageWidth, pageHeight);
+    const double renderLongest =
+        qMin(static_cast<double>(maxEdge) * kSupersample, pageLongest * kMaxRenderDpi / 72.0);
+    const double scale = renderLongest / pageLongest;
+    poppler::page_renderer renderer;
+    renderer.set_render_hint(poppler::page_renderer::antialiasing);
+    renderer.set_render_hint(poppler::page_renderer::text_antialiasing);
+    renderer.set_render_hint(poppler::page_renderer::text_hinting);
+    const poppler::image rendered = renderer.render_page(page, scale * 72.0, scale * 72.0);
     if (!rendered.is_valid() || rendered.format() != poppler::image::format_argb32)
         return {};
     const int width = rendered.width();
@@ -82,7 +94,9 @@ QImage renderPageScaled(const poppler::page *page, int maxEdge) {
     const char *src = rendered.const_data();
     for (int y = 0; y < height; ++y)
         memcpy(image.scanLine(y), src + y * bytesPerRow, static_cast<size_t>(width) * 4);
-    return image;
+    const int outWidth = qMax(1, qRound(maxEdge * pageWidth / pageLongest));
+    const int outHeight = qMax(1, qRound(maxEdge * pageHeight / pageLongest));
+    return image.scaled(outWidth, outHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 }
 
 } // namespace
