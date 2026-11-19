@@ -20,13 +20,19 @@ enum class FileCategory {
 };
 
 // Renders a small PNG preview (thumbnail) of a supported file. PDFs render
-// their first page via Poppler; office documents, archives and e-mails get
-// a generic icon tile; text files get a page tile with a text glyph.
-// Returns an empty QImage when no preview can be produced.
+// their first page via Poppler; office documents use the preview embedded
+// in the package; text files render their content onto an A4-shaped page
+// (word-wrapped, syntax highlighted); archives and e-mails get a generic
+// icon tile. Returns an empty QImage when no preview can be produced.
 class FilePreview {
 public:
     // Category of a file, derived from its extension (lower-cased suffix).
     [[nodiscard]] static FileCategory categoryForFile(const QString &path);
+
+    // True when the build links KSyntaxHighlighting (KF6), so text file
+    // thumbnails use full per-language syntax highlighting. Otherwise a
+    // built-in fallback highlighter is used.
+    [[nodiscard]] static bool hasSyntaxHighlighting();
 
     // One-letter badge drawn on generic tiles, empty for page-like tiles.
     [[nodiscard]] static QString badgeForCategory(FileCategory category);

@@ -5,13 +5,29 @@
 #include <QBuffer>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontMetrics>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRegularExpression>
+#include <QSyntaxHighlighter>
+#include <QTextCharFormat>
+#include <QTextDocument>
+#include <QTextOption>
+#include <QVector>
+#include <numbers>
+#include <utility>
 
 #if OKAPI_HAVE_LIBARCHIVE
 #include <archive.h>
 #include <archive_entry.h>
+#endif
+
+#if OKAPI_HAVE_KSYNTAXHIGHLIGHTING
+#include <KSyntaxHighlighting/Definition>
+#include <KSyntaxHighlighting/Repository>
+#include <KSyntaxHighlighting/SyntaxHighlighter>
+#include <KSyntaxHighlighting/Theme>
 #endif
 
 namespace okapi {
@@ -93,7 +109,8 @@ QImage iconTile(FileCategory category, int size) {
     return tile;
 }
 
-// Draws a text page tile: white page, folded corner and dark text lines.
+// Fallback tile for text files whose content cannot be extracted: white
+// page with a folded corner and dark text lines.
 QImage textTile(int size) {
     QImage tile(size, size, QImage::Format_ARGB32);
     tile.fill(Qt::transparent);
@@ -186,72 +203,239 @@ QImage embeddedPreviewFromOffice(const QString &path) {
 }
 #endif
 
-// Renders the first lines of a text file onto a white page tile, so text
-// attachments show a real content preview instead of a generic icon.
-QImage textContentTile(const QString &path, int size) {
+// Fallback highlighter for builds without KSyntaxHighlighting: line/block
+// comments, strings, numbers and a small keyword set per language family,
+// in a light editor palette that reads well on the white page.
+class GenericHighlighter : public QSyntaxHighlighter {
+public:
+    explicit GenericHighlighter(const QString &suffix, QTextDocument *parent)
+        : QSyntaxHighlighter(parent) {
+        QTextCharFormat keywordFormat;
+        keywordFormat.setForeground(QColor(0x00, 0x00, 0xcc));
+        keywordFormat.setFontWeight(QFont::Bold);
+        QTextCharFormat stringFormat;
+        stringFormat.setForeground(QColor(0xa3, 0x15, 0x15));
+        QTextCharFormat commentFormat;
+        commentFormat.setForeground(QColor(0x00, 0x80, 0x00));
+        commentFormat.setFontItalic(true);
+        QTextCharFormat numberFormat;
+        numberFormat.setForeground(QColor(0x09, 0x86, 0x58));
+
+        const QString s = suffix.toLower();
+        const auto addRule = [this](const QString &pattern, const QTextCharFormat &format) {
+            m_rules.append({.pattern = QRegularExpression(pattern), .format = format});
+        };
+
+        const bool cLike =
+            s == QLatin1String("c") || s == QLatin1String("cc") || s == QLatin1String("cpp") ||
+            s == QLatin1String("cxx") || s == QLatin1String("h") || s == QLatin1String("hpp") ||
+            s == QLatin1String("java") || s == QLatin1String("js") || s == QLatin1String("ts") ||
+            s == QLatin1String("go") || s == QLatin1String("rs") || s == QLatin1String("swift") ||
+            s == QLatin1String("kt") || s == QLatin1String("kts") || s == QLatin1String("scala") ||
+            s == QLatin1String("cs") || s == QLatin1String("dart") || s == QLatin1String("php") ||
+            s == QLatin1String("css") || s == QLatin1String("scss");
+        const bool markup = s == QLatin1String("html") || s == QLatin1String("htm") ||
+                            s == QLatin1String("xml") || s == QLatin1String("svg") ||
+                            s == QLatin1String("md") || s == QLatin1String("markdown");
+
+        if (s == QLatin1String("py") || s == QLatin1String("sh") || s == QLatin1String("rb") ||
+            s == QLatin1String("yaml") || s == QLatin1String("yml") || s == QLatin1String("toml") ||
+            s == QLatin1String("pl") || s == QLatin1String("r") || s == QLatin1String("ps1"))
+            addRule(QStringLiteral("#[^\\n]*"), commentFormat);
+        else if (s == QLatin1String("sql") || s == QLatin1String("lua"))
+            addRule(QStringLiteral("--[^\\n]*"), commentFormat);
+        else if (cLike)
+            addRule(QStringLiteral("//[^\\n]*"), commentFormat);
+
+        if (cLike) {
+            m_blockStart = QRegularExpression(QStringLiteral("/\\*"));
+            m_blockEnd = QRegularExpression(QStringLiteral("\\*/"));
+        } else if (markup) {
+            m_blockStart = QRegularExpression(QStringLiteral("<!--"));
+            m_blockEnd = QRegularExpression(QStringLiteral("-->"));
+        }
+        m_commentFormat = std::move(commentFormat);
+
+        addRule(QStringLiteral("\"(?:[^\"\\\\\\n]|\\\\.)*\""), stringFormat);
+        addRule(QStringLiteral("'(?:[^'\\\\\\n]|\\\\.)*'"), stringFormat);
+        if (s == QLatin1String("js") || s == QLatin1String("ts"))
+            addRule(QStringLiteral("`(?:[^`\\\\]|\\\\.)*`"), stringFormat);
+        addRule(QStringLiteral("\\b(?:0[xX][0-9a-fA-F]+|\\d+(?:\\.\\d+)?)\\b"), numberFormat);
+
+        QStringList keywords;
+        if (s == QLatin1String("py"))
+            keywords = QStringLiteral("def class return if elif else for while in import from "
+                                      "as with try except finally raise pass break continue "
+                                      "lambda yield global nonlocal assert del is not and or "
+                                      "None True False")
+                           .split(QLatin1Char(' '));
+        else if (s == QLatin1String("js") || s == QLatin1String("ts"))
+            keywords = QStringLiteral("const let var function return if else for while do switch "
+                                      "case break continue class extends new this typeof "
+                                      "instanceof in of try catch finally throw async await "
+                                      "yield import export from default")
+                           .split(QLatin1Char(' '));
+        else if (s == QLatin1String("go"))
+            keywords = QStringLiteral("func package import const var type struct interface map "
+                                      "chan go return if else for range switch case break "
+                                      "continue fallthrough defer select")
+                           .split(QLatin1Char(' '));
+        else if (s == QLatin1String("rs"))
+            keywords = QStringLiteral("fn let mut const struct enum impl trait pub use mod "
+                                      "return if else for while loop match break continue move "
+                                      "ref static where async await")
+                           .split(QLatin1Char(' '));
+        else if (s == QLatin1String("sh"))
+            keywords = QStringLiteral("if then else elif fi for while in do done case esac "
+                                      "function return echo exit set local export")
+                           .split(QLatin1Char(' '));
+        else if (s == QLatin1String("sql"))
+            keywords = QStringLiteral("select insert update delete from where join left right "
+                                      "inner outer group by order having limit offset create "
+                                      "table drop alter index values into set")
+                           .split(QLatin1Char(' '));
+        else if (cLike)
+            keywords = QStringLiteral("int long short char float double void bool struct enum "
+                                      "union class public private protected static const "
+                                      "virtual override final new return if else for while do "
+                                      "switch case break continue typedef namespace using "
+                                      "template typename this sizeof throw try catch")
+                           .split(QLatin1Char(' '));
+        if (!keywords.isEmpty())
+            addRule(QStringLiteral("\\b(?:") + keywords.join(QLatin1Char('|')) +
+                        QStringLiteral(")\\b"),
+                    keywordFormat);
+    }
+
+protected:
+    void highlightBlock(const QString &text) override {
+        for (const auto &rule : m_rules) {
+            auto it = rule.pattern.globalMatch(text);
+            while (it.hasNext()) {
+                const QRegularExpressionMatch match = it.next();
+                setFormat(static_cast<int>(match.capturedStart()),
+                          static_cast<int>(match.capturedLength()), rule.format);
+            }
+        }
+        if (m_blockStart.pattern().isEmpty())
+            return;
+        const int textLength = static_cast<int>(text.length());
+        int startIndex = 0;
+        if (previousBlockState() != kInBlockComment)
+            startIndex = static_cast<int>(m_blockStart.match(text).capturedStart());
+        while (startIndex >= 0) {
+            const QRegularExpressionMatch endMatch = m_blockEnd.match(text, startIndex);
+            const int endIndex = static_cast<int>(endMatch.capturedStart());
+            int length = 0;
+            if (endIndex == -1) {
+                setCurrentBlockState(kInBlockComment);
+                length = textLength - startIndex;
+            } else {
+                length = endIndex - startIndex + static_cast<int>(endMatch.capturedLength());
+            }
+            setFormat(startIndex, length, m_commentFormat);
+            startIndex =
+                static_cast<int>(m_blockStart.match(text, startIndex + length).capturedStart());
+        }
+    }
+
+private:
+    static constexpr int kInBlockComment = 1;
+    struct Rule {
+        QRegularExpression pattern;
+        QTextCharFormat format;
+    };
+    QVector<Rule> m_rules;
+    QRegularExpression m_blockStart;
+    QRegularExpression m_blockEnd;
+    QTextCharFormat m_commentFormat;
+};
+
+// Attaches a syntax highlighter to the document: KSyntaxHighlighting with
+// the definition matching the file name when available, otherwise the
+// built-in generic highlighter.
+void attachHighlighter(QTextDocument *doc, const QString &path) {
+#if OKAPI_HAVE_KSYNTAXHIGHLIGHTING
+    // Leaked on purpose: the highlighters are parented to the document and
+    // outlive this function, so they must never see a deleted repository.
+    static KSyntaxHighlighting::Repository *repository = new KSyntaxHighlighting::Repository;
+    const KSyntaxHighlighting::Definition definition =
+        repository->definitionForFileName(QFileInfo(path).fileName());
+    KSyntaxHighlighting::Theme theme = repository->theme(QStringLiteral("Breeze Light"));
+    if (!theme.isValid())
+        theme = repository->defaultTheme();
+    if (definition.isValid() && theme.isValid()) {
+        auto *highlighter = new KSyntaxHighlighting::SyntaxHighlighter(doc);
+        highlighter->setDefinition(definition);
+        highlighter->setTheme(theme);
+        return;
+    }
+#endif
+    new GenericHighlighter(QFileInfo(path).suffix(), doc);
+}
+
+// Renders the content of a text file onto an A4-shaped page — the same page
+// representation PDF thumbnails use: a white portrait page whose longest
+// edge is maxEdge. The text is laid out with QTextDocument, so it wraps at
+// the page margins and never overflows the page, and it is syntax
+// highlighted. Returns a null image when the file has no extractable text.
+QImage renderTextPage(const QString &path, int maxEdge) {
     QString error;
     QString text = TextExtractor::extractFromTextFile(path, &error);
     if (text.isEmpty())
         return {};
-    // Long lines would overflow the tile; cut them at a sane width.
-    const int maxLineChars = qMax(20, size);
-    QStringList lines = text.split(QLatin1Char('\n'));
-    for (auto &line : lines) {
-        line.replace(QLatin1Char('\t'), QStringLiteral("    "));
-        if (line.size() > maxLineChars)
-            line = line.left(maxLineChars) + QChar(0x2026); // horizontal ellipsis
+    // Only the beginning of the file is visible on the page anyway; cap the
+    // laid-out text so huge files stay cheap to render.
+    constexpr int kPreviewMaxChars = 8000;
+    if (text.size() > kPreviewMaxChars) {
+        text = text.left(kPreviewMaxChars);
+        text += QChar(0x2026); // horizontal ellipsis
     }
 
-    QImage tile(size, size, QImage::Format_ARGB32);
-    tile.fill(Qt::transparent);
-    QPainter painter(&tile);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    // Render at 2x and downscale, so the small text stays crisp.
+    constexpr qreal kSupersample = 2.0;
+    constexpr qreal kA4HeightPerWidth = std::numbers::sqrt2;
+    const int pageHeight = qMax(8, qRound(maxEdge * kSupersample));
+    const int pageWidth = qMax(8, qRound(pageHeight / kA4HeightPerWidth));
+    const qreal margin = pageWidth * 0.09;
 
-    const qreal margin = size * 0.18;
-    const qreal pageWidth = size - (2 * margin);
-    const qreal pageHeight = pageWidth * 1.3;
-    const qreal fold = pageWidth * 0.22;
-    const qreal x = (size - pageWidth) / 2.0;
-    const qreal y = (size - pageHeight) / 2.0;
+    QImage page(pageWidth, pageHeight, QImage::Format_ARGB32);
+    page.fill(Qt::white);
 
-    QPainterPath page;
-    page.moveTo(x, y);
-    page.lineTo(x + pageWidth - fold, y);
-    page.lineTo(x + pageWidth, y + fold);
-    page.lineTo(x + pageWidth, y + pageHeight);
-    page.lineTo(x, y + pageHeight);
-    page.closeSubpath();
-    painter.setPen(QPen(QColor(0, 0, 0, 60), 1));
-    painter.setBrush(Qt::white);
-    painter.drawPath(page);
-    QPainterPath foldPath;
-    foldPath.moveTo(x + pageWidth - fold, y);
-    foldPath.lineTo(x + pageWidth, y + fold);
-    foldPath.lineTo(x + pageWidth - fold, y + fold);
-    foldPath.closeSubpath();
-    painter.setBrush(QColor(0xe0, 0xe0, 0xe0));
-    painter.drawPath(foldPath);
-
+    QTextDocument doc;
     QFont font(QStringLiteral("Monospace"));
     font.setStyleHint(QFont::TypeWriter);
-    font.setPixelSize(qMax(5, static_cast<int>(size * 0.09)));
-    painter.setFont(font);
-    painter.setPen(QColor(0x1a, 0x1a, 0x1a));
-    const QFontMetrics metrics(font);
-    const qreal lineSpacing = metrics.lineSpacing() * 1.15;
-    const QRect textRect(static_cast<int>(x + (pageWidth * 0.14)),
-                         static_cast<int>(y + (pageHeight * 0.16)),
-                         static_cast<int>(pageWidth * 0.72), static_cast<int>(pageHeight * 0.72));
-    qreal lineY = textRect.top();
-    for (const auto &line : lines) {
-        if (lineY + lineSpacing > textRect.bottom())
-            break;
-        painter.drawText(QPointF(textRect.left(), lineY + metrics.ascent()), line);
-        lineY += lineSpacing;
-    }
+    font.setPixelSize(qMax(6, qRound(pageWidth * 0.062)));
+    doc.setDefaultFont(font);
+    doc.setDocumentMargin(0);
+    QTextOption textOption = doc.defaultTextOption();
+    // WrapAnywhere guarantees that even long unbroken tokens (URLs,
+    // minified JSON) stay inside the page margins.
+    textOption.setWrapMode(QTextOption::WrapAnywhere);
+    textOption.setTabStopDistance(4.0 * QFontMetrics(font).horizontalAdvance(QLatin1Char(' ')));
+    doc.setDefaultTextOption(textOption);
+    doc.setTextWidth(pageWidth - (2 * margin));
+    attachHighlighter(&doc, path);
+    doc.setPlainText(text);
+
+    QPainter painter(&page);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    // Hairline page edge, like the border of a rendered PDF page.
+    painter.setPen(QPen(QColor(0, 0, 0, 40), 1));
+    painter.setBrush(Qt::white);
+    painter.drawRect(QRectF(0.5, 0.5, pageWidth - 1.0, pageHeight - 1.0));
+    painter.save();
+    painter.setClipRect(
+        QRectF(margin, margin, pageWidth - (2 * margin), pageHeight - (2 * margin)));
+    painter.translate(margin, margin);
+    doc.drawContents(&painter);
+    painter.restore();
     painter.end();
-    return tile;
+
+    const int outHeight = maxEdge;
+    const int outWidth = qMax(1, qRound(maxEdge / kA4HeightPerWidth));
+    return page.scaled(outWidth, outHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 }
 
 QByteArray encodePng(const QImage &image) {
@@ -299,6 +483,14 @@ FileCategory FilePreview::categoryForFile(const QString &path) {
     return FileCategory::Generic;
 }
 
+bool FilePreview::hasSyntaxHighlighting() {
+#if OKAPI_HAVE_KSYNTAXHIGHLIGHTING
+    return true;
+#else
+    return false;
+#endif
+}
+
 QString FilePreview::badgeForCategory(FileCategory category) {
     switch (category) {
     case FileCategory::Pdf:
@@ -334,7 +526,7 @@ QByteArray FilePreview::thumbnailForFile(const QString &path, int maxEdge) {
         preview = embeddedPreviewFromOffice(path);
 #endif
     } else if (category == FileCategory::Text) {
-        preview = textContentTile(path, maxEdge);
+        preview = renderTextPage(path, maxEdge);
     }
     if (preview.isNull()) {
         if (category == FileCategory::Text)

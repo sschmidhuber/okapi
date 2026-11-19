@@ -80,7 +80,9 @@ public:
 
     [[nodiscard]] static int maxTextFileChars() { return 200000; }
     [[nodiscard]] static int maxArchiveEntries() { return 500; }
-    [[nodiscard]] static qint64 maxArchiveTotalBytes() { return qint64(256) * 1024 * 1024; }
+    [[nodiscard]] static qint64 maxArchiveTotalBytes() {
+        return static_cast<qint64>(256) * 1024 * 1024;
+    }
 };
 
 } // namespace okapi

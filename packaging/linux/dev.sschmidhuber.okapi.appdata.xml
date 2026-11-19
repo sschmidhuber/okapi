@@ -16,7 +16,7 @@
       <li>Streaming chat over Server-Sent Events with live token throughput (t/s)</li>
       <li>Reasoning models: thinking phases shown as collapsible elements in the chat</li>
       <li>MCP (Model Context Protocol) integration: connect HTTP/SSE or stdio servers and use their tools, resources and prompts, with per-tool permissions (off / ask / allow); tool calls and results are shown inline in the chat</li>
-      <li>File attachments: images, PDFs, office documents, archives, e-mails and text files, with thumbnail previews and automatic text extraction (Poppler, Tesseract OCR, libarchive; optional at build time)</li>
+      <li>File attachments: images, PDFs, office documents, archives, e-mails and text files, with thumbnail previews (text files as syntax-highlighted A4 pages) and automatic text extraction (Poppler, Tesseract OCR, libarchive, KSyntaxHighlighting; optional at build time)</li>
       <li>Speech-to-text dictation with live transcription while you speak</li>
       <li>Text-to-speech: assistant responses can be read aloud, synthesized sentence-by-sentence while the response streams in</li>
       <li>Prompt templates, insertable via slash commands in the composer</li>
