@@ -11,6 +11,9 @@ Designer files (CMake AUTOUIC generates `ui_*.h`):
   `shortcutpage`, `userinterfacepage`, `prompttemplatespage`); widget
   `objectName`s match the former `setObjectName()` calls (e.g. `themeCombo`,
   `apiKeyRadio`, `apiKeyEdit`, `headersRadio`, `headersEdit`).
+- **`src/ui/sidebar.ui`** — internal layout of the `Sidebar` promoted widget
+  (the chat tree `tree` with its view/drag-drop properties); loaded via
+  `Ui::Sidebar::setupUi()` in `Sidebar::Sidebar()`.
 
 Open them in Qt Widget Designer:
 

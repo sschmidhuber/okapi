@@ -166,6 +166,7 @@ set(OKAPI_UI_SOURCES
     ui/composer.cpp
     ui/sidebar.h
     ui/sidebar.cpp
+    ui/sidebar.ui
     ui/backendpage.h
     ui/backendpage.cpp
     ui/backendpage.ui

@@ -1,7 +1,9 @@
 #include "ui/sidebar.h"
+
 #include "core/chatsession.h"
 #include "core/sessiongrouper.h"
 #include "ui/theme.h"
+#include "ui_sidebar.h"
 
 #include <QApplication>
 #include <QDropEvent>
@@ -17,7 +19,6 @@
 #include <QShortcut>
 #include <QTimer>
 #include <QTreeWidget>
-#include <QVBoxLayout>
 
 #include <algorithm>
 #include <functional>
@@ -102,36 +103,24 @@ QStringList orderedGroupKeys(const QVector<ChatSession *> &sessions) {
 
 } // namespace
 
-Sidebar::Sidebar(QWidget *parent) : QWidget(parent), m_tree(new QTreeWidget(this)) {
+Sidebar::Sidebar(QWidget *parent) : QWidget(parent) {
+    // The widget tree (layout + QTreeWidget "tree" with its view properties)
+    // lives in sidebar.ui so it can be edited in Qt Designer.
+    m_ui = std::make_unique<Ui::Sidebar>();
+    m_ui->setupUi(this);
+    m_tree = m_ui->tree;
+
     // The spinner of running chats rotates continuously; started lazily in
     // setIndicators() so an idle sidebar keeps no timer running.
     m_spinnerTimer = new QTimer(this);
     m_spinnerTimer->setInterval(120);
     connect(m_spinnerTimer, &QTimer::timeout, this, &Sidebar::advanceSpinner);
 
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(6);
-    layout->addWidget(m_tree, 1);
-
-    m_tree->setHeaderHidden(true);
-    m_tree->setRootIsDecorated(true);
-    m_tree->setIndentation(12);
-    // Multi-selection: Ctrl+click adds items, Shift+click selects a range,
-    // group headers are selectable like chats.
-    m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_tree->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
-    // Chats can be dragged onto the sections and topics to move them there.
-    m_tree->setDragEnabled(true);
-    m_tree->setAcceptDrops(true);
+    // The viewport accepts drops (not a .ui property); drops are handled in
+    // eventFilter(): instead of moving items internally (which would corrupt
+    // the section model), the drop is translated into the target
+    // section/topic and emitted as sessionsDropped().
     m_tree->viewport()->setAcceptDrops(true);
-    m_tree->setDropIndicatorShown(true);
-    m_tree->setDragDropMode(QAbstractItemView::DragDrop);
-    m_tree->setDefaultDropAction(Qt::MoveAction);
-    // Drops are handled in eventFilter(): instead of moving items internally
-    // (which would corrupt the section model), the drop is translated into
-    // the target section/topic and emitted as sessionsDropped().
     m_tree->viewport()->installEventFilter(this);
 
     connect(m_tree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item) {

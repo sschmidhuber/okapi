@@ -9,10 +9,16 @@
 #include <QVector>
 #include <QWidget>
 
+#include <memory>
+
 class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QMenu;
+
+namespace Ui {
+class Sidebar;
+}
 
 namespace okapi {
 
@@ -134,7 +140,8 @@ private:
     // Adds the "Move to topic" submenu (one entry per available topic).
     void addMoveToTopicSubmenu(QMenu *menu, const QUuid &chatId, const QString &currentTopicId);
 
-    QTreeWidget *m_tree;
+    std::unique_ptr<Ui::Sidebar> m_ui;
+    QTreeWidget *m_tree = nullptr;
     QTimer *m_spinnerTimer = nullptr;
     int m_spinnerAngle = 0;
     QVector<ChatSession *> m_sessions;
