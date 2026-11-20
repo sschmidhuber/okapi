@@ -38,7 +38,8 @@ set(OKAPI_TESTS
     tst_audioformat
     tst_ttsclient
     tst_ttsplayer
-    tst_debuglog)
+    tst_debuglog
+    tst_uifiles)
 
 
 foreach(test_name ${OKAPI_TESTS})
@@ -47,12 +48,16 @@ foreach(test_name ${OKAPI_TESTS})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
+# tst_uifiles scans the .ui sources, so it needs the source dir at compile time.
+target_compile_definitions(tst_uifiles PRIVATE OKAPI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # The sidebar lives in the application target, so its test compiles the
 # source directly and links against Qt Widgets. It uses themedIcon() for the
 # badges and section icons, so it also compiles theme.cpp, links Qt6::Svg
 # and embeds the icons like the app does.
 add_executable(tst_sidebar tst_sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/sidebar.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/sidebar.ui
     ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp)
 target_include_directories(tst_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_sidebar PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::Svg)

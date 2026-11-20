@@ -9,10 +9,16 @@
 #include <QVector>
 #include <QWidget>
 
+#include <memory>
+
 class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QMenu;
+
+namespace Ui {
+class Sidebar;
+}
 
 namespace okapi {
 
@@ -42,6 +48,9 @@ class Sidebar : public QWidget {
 
 public:
     explicit Sidebar(QWidget *parent = nullptr);
+    // Defined in the .cpp (where Ui::Sidebar is complete) because of the
+    // unique_ptr member.
+    ~Sidebar() override;
 
     // Rebuilds the tree from the given sessions (pinned/deleted/topic state
     // is read from the ChatSession objects).
@@ -134,7 +143,8 @@ private:
     // Adds the "Move to topic" submenu (one entry per available topic).
     void addMoveToTopicSubmenu(QMenu *menu, const QUuid &chatId, const QString &currentTopicId);
 
-    QTreeWidget *m_tree;
+    std::unique_ptr<Ui::Sidebar> m_ui;
+    QTreeWidget *m_tree = nullptr;
     QTimer *m_spinnerTimer = nullptr;
     int m_spinnerAngle = 0;
     QVector<ChatSession *> m_sessions;

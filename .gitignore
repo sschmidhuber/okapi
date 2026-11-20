@@ -84,3 +84,6 @@ src/**/*.moc
 # Node (web asset linting)
 node_modules/
 package-lock.json
+
+# AUTOUIC-generated headers (build artifacts)
+src/ui/ui_*.h

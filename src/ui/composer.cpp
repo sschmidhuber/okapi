@@ -211,7 +211,45 @@ Composer::Composer(QWidget *parent) : QWidget(parent) {
     rowLayout->setContentsMargins(0, 0, 0, 0);
     rowLayout->setSpacing(2);
     m_textEdit = new MessageTextEdit(row);
-    m_attachButton = new QToolButton(this);
+    // The mic/attach buttons are declared in mainwindow.ui and adopted via
+    // adoptToolButtons() once the parent's setupUi has created them; the
+    // text edit fills the composer row.
+    rowLayout->addWidget(m_textEdit, 1);
+    layout->addWidget(row);
+
+    m_textEdit->setAccessibleName(tr("Message input"));
+    m_textEdit->setPlaceholderText(
+        tr("Type a message…  (Enter to send, Shift+Enter for a new line)"));
+    m_textEdit->setTabChangesFocus(true);
+    m_textEdit->setAcceptDrops(true);
+    // Full frame around the input, including the top side.
+    m_textEdit->setStyleSheet(QStringLiteral("QPlainTextEdit { border: 1px solid palette(mid); }"));
+    m_textEdit->setPalette(qApp->palette());
+
+    m_textEdit->installEventFilter(this);
+    connect(m_textEdit, &MessageTextEdit::imagePasted, this,
+            [this](const ImageAttachment &attachment) { addAttachment(attachment); });
+    connect(m_textEdit, &MessageTextEdit::imagePasteFailed, this,
+            [this](const QString &error) { QMessageBox::warning(this, tr("Image error"), error); });
+    connect(m_textEdit, &MessageTextEdit::documentDropped, this,
+            [this](const QString &path) { addDocument(path); });
+    const QKeySequence dictateSequence(QStringLiteral("Ctrl+."));
+    m_dictateShortcut = new QShortcut(dictateSequence, this);
+    m_dictateShortcut->setContext(Qt::WindowShortcut);
+    connect(m_dictateShortcut, &QShortcut::activated, this, [this]() {
+        if (m_dictationAvailable && !m_busy)
+            emit dictationRequested();
+    });
+    // Live filter while the prompt-template menu is open.
+    connect(m_textEdit, &QPlainTextEdit::textChanged, this, [this]() {
+        onTextChanged();
+        emit textChanged(m_textEdit->toPlainText());
+    });
+}
+
+void Composer::adoptToolButtons(QToolButton *attachButton, QToolButton *micButton) {
+    m_attachButton = attachButton;
+    m_micButton = micButton;
     const QIcon attachIcon(themedIcon(QStringLiteral(":/resources/icons/folder-new-symbolic.svg")));
     if (!attachIcon.isNull()) {
         m_attachButton->setIcon(attachIcon);
@@ -222,7 +260,7 @@ Composer::Composer(QWidget *parent) : QWidget(parent) {
     m_attachButton->setToolTip(tr("Attach images, documents or text files"));
     m_attachButton->setAutoRaise(true);
     m_attachButton->setFixedSize(28, 28);
-    m_micButton = new QToolButton(this);
+
     const QIcon micIcon(themedIcon(QStringLiteral(":/resources/icons/microphone.svg")));
     if (!micIcon.isNull()) {
         m_micButton->setIcon(micIcon);
@@ -237,43 +275,12 @@ Composer::Composer(QWidget *parent) : QWidget(parent) {
     m_micButton->setAutoRaise(true);
     m_micButton->setCheckable(true);
     m_micButton->setFixedSize(28, 28);
-    // The mic/attach buttons are laid out by MainWindow next to the model
-    // picker; the text edit fills the composer row.
-    rowLayout->addWidget(m_textEdit, 1);
-    layout->addWidget(row);
 
-    m_textEdit->setAccessibleName(tr("Message input"));
-    m_textEdit->setPlaceholderText(
-        tr("Type a message…  (Enter to send, Shift+Enter for a new line)"));
-    m_textEdit->setTabChangesFocus(true);
-    m_textEdit->setAcceptDrops(true);
-    // Full frame around the input, including the top side.
-    m_textEdit->setStyleSheet(QStringLiteral("QPlainTextEdit { border: 1px solid palette(mid); }"));
-    m_textEdit->setPalette(qApp->palette());
-
-    m_textEdit->installEventFilter(this);
     connect(m_attachButton, &QToolButton::clicked, this, &Composer::attachFiles);
-    connect(m_textEdit, &MessageTextEdit::imagePasted, this,
-            [this](const ImageAttachment &attachment) { addAttachment(attachment); });
-    connect(m_textEdit, &MessageTextEdit::imagePasteFailed, this,
-            [this](const QString &error) { QMessageBox::warning(this, tr("Image error"), error); });
-    connect(m_textEdit, &MessageTextEdit::documentDropped, this,
-            [this](const QString &path) { addDocument(path); });
     connect(m_micButton, &QToolButton::toggled, this, [this](bool checked) {
         if (checked == m_dictationActive)
             return;
         emit dictationRequested();
-    });
-    m_dictateShortcut = new QShortcut(dictateSequence, this);
-    m_dictateShortcut->setContext(Qt::WindowShortcut);
-    connect(m_dictateShortcut, &QShortcut::activated, this, [this]() {
-        if (m_dictationAvailable && !m_busy)
-            emit dictationRequested();
-    });
-    // Live filter while the prompt-template menu is open.
-    connect(m_textEdit, &QPlainTextEdit::textChanged, this, [this]() {
-        onTextChanged();
-        emit textChanged(m_textEdit->toPlainText());
     });
 }
 

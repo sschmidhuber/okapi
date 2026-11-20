@@ -35,6 +35,7 @@ if(OKAPI_BUILD_TESTS)
 endif()
 
 include(GNUInstallDirs)
+add_subdirectory(designer)
 install(TARGETS okapi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES data/dev.sschmidhuber.okapi.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

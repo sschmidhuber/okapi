@@ -83,9 +83,10 @@ public:
     void addDroppedUrls(const QList<QUrl> &urls);
     void addDroppedImage(const QImage &image);
 
-    // The mic and attach buttons are created here (behavior, tooltips,
-    // state handling) but laid out by the parent, so they can share a row
-    // with the model selector.
+    // The mic and attach buttons are declared in the parent's .ui file
+    // (mainwindow.ui, footer row) so the whole footer is Designer-editable;
+    // the composer adopts them here and wires behavior, tooltips and state.
+    void adoptToolButtons(QToolButton *attachButton, QToolButton *micButton);
     [[nodiscard]] QToolButton *micButton() const { return m_micButton; }
     [[nodiscard]] QToolButton *attachButton() const { return m_attachButton; }
     // Dictation needs a configured speech-to-text service; hide the mic
