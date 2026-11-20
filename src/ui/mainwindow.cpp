@@ -372,7 +372,7 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::setupConnections() {
-    connect(m_newChatButton, &QToolButton::clicked, this, &MainWindow::onNewChat);
+    connect(m_newChatButton, &QAction::triggered, this, &MainWindow::onNewChat);
     createWindowShortcuts();
     m_composer->setDictateSequence(m_shortcuts.sequence(QStringLiteral("dictate")));
     m_composer->setPromptTriggerSequence(m_shortcuts.sequence(QStringLiteral("promptTemplates")));
@@ -415,7 +415,7 @@ void MainWindow::setupConnections() {
             m_composer->refreshTheme();
         }
     });
-    connect(m_settingsButton, &QToolButton::clicked, this, [this] { openSettings(QString()); });
+    connect(m_settingsButton, &QAction::triggered, this, [this] { openSettings(QString()); });
     setupComposerSplitter();
     connect(m_sidebar, &Sidebar::sessionSelected, this, &MainWindow::onSessionSelected);
     connect(m_sidebar, &Sidebar::sessionDeleteRequested, this,

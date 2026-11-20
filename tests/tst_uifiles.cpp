@@ -16,6 +16,7 @@ class TestUiFiles : public QObject {
 
 private slots:
     void uiFilesUseDesignerCompatibleClassNames();
+    void noWidgetChildrenInToolBarOrMenuBar();
 };
 
 void TestUiFiles::uiFilesUseDesignerCompatibleClassNames() {
@@ -61,6 +62,41 @@ void TestUiFiles::uiFilesUseDesignerCompatibleClassNames() {
             QVERIFY2(declaredCustomWidgets.contains(cls),
                      qPrintable(name + ": widget class " + cls +
                                 " has no <customwidget> entry and would be dropped by Designer"));
+        }
+    }
+}
+
+// Qt Designer does not support child widgets inside a QToolBar or QMenuBar
+// (only <addaction>/<separator> referencing <action> elements); it drops
+// widget children there on save, and the generated ui_*.h then loses the
+// members. Status bar labels, in contrast, are supported.
+void TestUiFiles::noWidgetChildrenInToolBarOrMenuBar() {
+    const QDir dir(QStringLiteral(OKAPI_SOURCE_DIR) + QStringLiteral("/src/ui"));
+    const QStringList files = dir.entryList({QStringLiteral("*.ui")}, QDir::Files);
+    QVERIFY2(!files.isEmpty(), "no .ui files found under src/ui");
+
+    for (const QString &name : files) {
+        QFile file(dir.filePath(name));
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(name));
+
+        QXmlStreamReader xml(&file);
+        QStringList widgetStack; // class names of the open <widget> elements
+        while (!xml.atEnd()) {
+            xml.readNext();
+            if (xml.isStartElement() && xml.name() == QLatin1String("widget")) {
+                const QString cls = xml.attributes().value(QLatin1String("class")).toString();
+                const QString widgetName = xml.attributes().value(QLatin1String("name")).toString();
+                if (!widgetStack.isEmpty() && (widgetStack.last() == QLatin1String("QToolBar") ||
+                                               widgetStack.last() == QLatin1String("QMenuBar")))
+                    QFAIL(qPrintable(
+                        name + ": widget child '" + widgetName + "' inside " + widgetStack.last() +
+                        " is dropped by Designer on save; use an <action> + <addaction>"));
+                widgetStack.append(cls);
+            } else if (xml.isEndElement() && xml.name() == QLatin1String("widget")) {
+                if (!widgetStack.isEmpty())
+                    widgetStack.removeLast();
+            }
+            QVERIFY2(!xml.hasError(), qPrintable(name + ": " + xml.errorString()));
         }
     }
 }

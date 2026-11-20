@@ -258,33 +258,29 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <widget class="QToolButton" name="newChatButton">
-    <property name="text">
-     <string>New</string>
-    </property>
-    <property name="toolButtonStyle">
-     <enum>Qt::ToolButtonTextBesideIcon</enum>
-    </property>
-    <property name="toolTip">
-     <string>Start a new chat</string>
-    </property>
-   </widget>
-   <widget class="QToolButton" name="settingsButton">
-    <property name="text">
-     <string>Settings</string>
-    </property>
-    <property name="toolButtonStyle">
-     <enum>Qt::ToolButtonTextBesideIcon</enum>
-    </property>
-    <property name="toolTip">
-     <string>Open settings</string>
-    </property>
-   </widget>
+   <addaction name="newChatButton"/>
+   <addaction name="settingsButton"/>
   </widget>
   <widget class="QStatusBar" name="statusbar">
    <widget class="QLabel" name="statusLabel"/>
    <widget class="QLabel" name="mcpStatusLabel"/>
   </widget>
+  <action name="newChatButton">
+   <property name="text">
+    <string>New</string>
+   </property>
+   <property name="toolTip">
+    <string>Start a new chat</string>
+   </property>
+  </action>
+  <action name="settingsButton">
+   <property name="text">
+    <string>Settings</string>
+   </property>
+   <property name="toolTip">
+    <string>Open settings</string>
+   </property>
+  </action>
  </widget>
  <customwidgets>
   <customwidget>
