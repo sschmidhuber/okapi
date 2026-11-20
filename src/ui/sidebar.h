@@ -48,6 +48,9 @@ class Sidebar : public QWidget {
 
 public:
     explicit Sidebar(QWidget *parent = nullptr);
+    // Defined in the .cpp (where Ui::Sidebar is complete) because of the
+    // unique_ptr member.
+    ~Sidebar() override;
 
     // Rebuilds the tree from the given sessions (pinned/deleted/topic state
     // is read from the ChatSession objects).

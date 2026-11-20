@@ -103,6 +103,8 @@ QStringList orderedGroupKeys(const QVector<ChatSession *> &sessions) {
 
 } // namespace
 
+Sidebar::~Sidebar() = default;
+
 Sidebar::Sidebar(QWidget *parent) : QWidget(parent) {
     // The widget tree (layout + QTreeWidget "tree" with its view properties)
     // lives in sidebar.ui so it can be edited in Qt Designer.
