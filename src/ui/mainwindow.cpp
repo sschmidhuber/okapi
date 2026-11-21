@@ -3,8 +3,10 @@
 #include "backends/backendfactory.h"
 #include "backends/ibackend.h"
 #include "core/attachmentopener.h"
+#include "core/audiorecorder.h"
 #include "core/chatsession.h"
 #include "core/tooldebug.h"
+#include "core/ttsplayer.h"
 #include "storage/chatdatabase.h"
 #include "ui/composer.h"
 #include "ui/settingsdialog.h"
@@ -308,6 +310,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     connect(m_prefetchDrainTimer, &QTimer::timeout, this, [this]() { drainPrefetchResults(); });
     m_prefetchDrainTimer->start();
     QTimer::singleShot(kPrefetchDelayMs, this, [this]() { prefetchRecentSessions(); });
+    // Warm the audio backend once after startup: the first QMediaDevices
+    // query initializes PulseAudio/PipeWire and can block noticeably, which
+    // otherwise surfaces as a delay when the settings dialog's STT/TTS pages
+    // enumerate audio devices for the first time.
+    QTimer::singleShot(0, this, [] {
+        AudioRecorder::availableInputDevices();
+        TtsPlayer::availableOutputDevices();
+    });
 }
 
 void MainWindow::showEvent(QShowEvent *event) {

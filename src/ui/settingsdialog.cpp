@@ -22,6 +22,7 @@
 
 #include <QDialogButtonBox>
 #include <QListWidget>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
@@ -44,26 +45,36 @@ SettingsDialog::SettingsDialog(BackendRegistry *backendRegistry, McpRegistry *mc
     addCategory(tr("General"), QStringLiteral("general"),
                 QStringLiteral(":/resources/icons/general.svg"));
     addTab(tr("System Prompt"), QStringLiteral("systemprompt"),
-           new SystemPromptPage(systemPrompt, m_stack));
+           [systemPrompt, stack = m_stack] { return new SystemPromptPage(systemPrompt, stack); });
     addTab(tr("Prompt Templates"), QStringLiteral("prompttemplates"),
-           new PromptTemplatesPage(promptTemplates, m_stack));
+           [promptTemplates, stack = m_stack] {
+               return new PromptTemplatesPage(promptTemplates, stack);
+           });
     addTab(tr("User Interface"), QStringLiteral("userinterface"),
-           new UserInterfacePage(uiSettings, m_stack));
+           [uiSettings, stack = m_stack] { return new UserInterfacePage(uiSettings, stack); });
 
     addCategory(tr("Models"), QStringLiteral("models"),
                 QStringLiteral(":/resources/icons/ai_chip.svg"));
-    addTab(tr("LLM"), QStringLiteral("llm"), new BackendPage(backendRegistry, m_stack));
-    addTab(tr("STT"), QStringLiteral("stt"), new SttPage(sttRegistry, backendRegistry, m_stack));
-    addTab(tr("TTS"), QStringLiteral("tts"), new TtsPage(ttsRegistry, backendRegistry, m_stack));
+    addTab(tr("LLM"), QStringLiteral("llm"),
+           [backendRegistry, stack = m_stack] { return new BackendPage(backendRegistry, stack); });
+    addTab(tr("STT"), QStringLiteral("stt"), [sttRegistry, backendRegistry, stack = m_stack] {
+        return new SttPage(sttRegistry, backendRegistry, stack);
+    });
+    addTab(tr("TTS"), QStringLiteral("tts"), [ttsRegistry, backendRegistry, stack = m_stack] {
+        return new TtsPage(ttsRegistry, backendRegistry, stack);
+    });
 
     addCategory(tr("Tools"), QStringLiteral("tools"),
                 QStringLiteral(":/resources/icons/tools.svg"));
-    addTab(tr("MCP"), QStringLiteral("mcp"), new McpPage(mcpRegistry, mcpManager, m_stack));
+    addTab(tr("MCP"), QStringLiteral("mcp"), [mcpRegistry, mcpManager, stack = m_stack] {
+        return new McpPage(mcpRegistry, mcpManager, stack);
+    });
 
     addCategory(tr("Shortcuts"), QStringLiteral("shortcuts"),
                 QStringLiteral(":/resources/icons/keyboard.svg"));
-    addTab(tr("Shortcuts"), QStringLiteral("shortcuts"),
-           new ShortcutPage(shortcutRegistry, m_stack));
+    addTab(tr("Shortcuts"), QStringLiteral("shortcuts"), [shortcutRegistry, stack = m_stack] {
+        return new ShortcutPage(shortcutRegistry, stack);
+    });
 
     // Stretch factor 0 for the sidebar: on the first layout QSplitter
     // distributes extra space by stretch factor, so (1, 1) made the category
@@ -116,11 +127,40 @@ void SettingsDialog::addCategory(const QString &title, const QString &categoryId
     item->setIcon(themedIcon(iconPath));
     item->setData(Qt::UserRole, m_stack->count() - 1);
     item->setData(Qt::UserRole + 1, categoryId);
+
+    // Build a page only when its tab is first selected.
+    connect(tabs, &QTabWidget::currentChanged, this,
+            [this, tabs](int index) { ensureTabBuilt(tabs, index); });
 }
 
-void SettingsDialog::addTab(const QString &title, const QString &tabId, QWidget *page) {
-    m_tabWidgets.constLast()->addTab(page, title);
+void SettingsDialog::addTab(const QString &title, const QString &tabId,
+                            std::function<QWidget *()> factory) {
+    auto *tabs = m_tabWidgets.constLast();
+    // Register before adding the tab: adding the first tab of a category
+    // emits currentChanged(0), which must already find the factory.
+    m_tabTitles.append(title);
     m_tabIds.append(tabId);
+    m_tabFactories.append(std::move(factory));
+    m_tabBuilt.append(false);
+    // Placeholder page; replaced by the real page in ensureTabBuilt().
+    tabs->addTab(new QWidget(tabs), title);
+}
+
+void SettingsDialog::ensureTabBuilt(QTabWidget *tabs, int index) {
+    const int categoryRow = m_tabWidgets.indexOf(tabs);
+    if (categoryRow < 0 || index < 0)
+        return;
+    const int global = m_tabOffsets.value(categoryRow, 0) + index;
+    if (global >= m_tabFactories.size() || m_tabBuilt.value(global, true))
+        return;
+    // Mark as built before swapping the placeholder so the currentChanged
+    // signals emitted by removeTab/insertTab do not recurse.
+    m_tabBuilt[global] = true;
+    QWidget *page = m_tabFactories.at(global)();
+    const QSignalBlocker blocker(tabs);
+    tabs->removeTab(index);
+    tabs->insertTab(index, page, m_tabTitles.at(global));
+    tabs->setCurrentIndex(index);
 }
 
 } // namespace okapi
