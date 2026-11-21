@@ -147,11 +147,11 @@ void SettingsDialog::addTab(const QString &title, const QString &tabId,
 }
 
 void SettingsDialog::ensureTabBuilt(QTabWidget *tabs, int index) {
-    const int categoryRow = m_tabWidgets.indexOf(tabs);
+    const qsizetype categoryRow = m_tabWidgets.indexOf(tabs);
     if (categoryRow < 0 || index < 0)
         return;
-    const int global = m_tabOffsets.value(categoryRow, 0) + index;
-    if (global >= m_tabFactories.size() || m_tabBuilt.value(global, true))
+    const int global = m_tabOffsets.value(static_cast<int>(categoryRow), 0) + index;
+    if (global >= static_cast<int>(m_tabFactories.size()) || m_tabBuilt.value(global, true))
         return;
     // Mark as built before swapping the placeholder so the currentChanged
     // signals emitted by removeTab/insertTab do not recurse.
