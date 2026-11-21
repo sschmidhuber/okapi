@@ -164,6 +164,7 @@ set(OKAPI_UI_SOURCES
     ui/chatdelegate.cpp
     ui/composer.h
     ui/composer.cpp
+    ui/composer.ui
     ui/sidebar.h
     ui/sidebar.cpp
     ui/sidebar.ui

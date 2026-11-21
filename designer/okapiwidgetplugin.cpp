@@ -22,6 +22,9 @@ QList<QDesignerCustomWidgetInterface *> OkapiWidgetCollection::customWidgets() c
         new OkapiCustomWidget(
             QStringLiteral("ModelPickerButton"), QStringLiteral("ui/mainwindow.h"),
             [](QWidget *p) -> QWidget * { return new okapi::ModelPickerButton(p); }),
+        new OkapiCustomWidget(
+            QStringLiteral("MessageTextEdit"), QStringLiteral("ui/composer.h"),
+            [](QWidget *p) -> QWidget * { return new okapi::MessageTextEdit(p); }),
     };
 }
 

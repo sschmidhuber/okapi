@@ -315,8 +315,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     // otherwise surfaces as a delay when the settings dialog's STT/TTS pages
     // enumerate audio devices for the first time.
     QTimer::singleShot(0, this, [] {
-        AudioRecorder::availableInputDevices();
-        TtsPlayer::availableOutputDevices();
+        // Results are intentionally unused; the calls only warm the backend.
+        static_cast<void>(AudioRecorder::availableInputDevices());
+        static_cast<void>(TtsPlayer::availableOutputDevices());
     });
 }
 
