@@ -157,6 +157,7 @@ private slots:
     void editMessageTruncatesHistoryOnSend();
     void composerInsertTemplateAppendsTextAndAttachments();
     void promptMenuFiltersAndEnterConfirms();
+    void promptMenuIsPopupSoItStaysOutOfTheTaskbar();
     void composerFollowsDarkPalette();
     void promptMenuOpensAtCaretAnchor();
     void promptMenuArrowKeysNavigateVisibleEntries();
@@ -723,6 +724,31 @@ void TestMainWindow::composerInsertTemplateAppendsTextAndAttachments() {
 // The prompt-template trigger: typing "/" opens the menu, typing on filters
 // it ("/re" shows only "Recherche"), Enter confirms the top entry and replaces
 // the typed trigger text with the template.
+// The prompt-template popup must be a Qt::Popup window, not a plain
+// top-level Qt::Window: only popup-type windows are excluded from the
+// taskbar by the window manager.
+void TestMainWindow::promptMenuIsPopupSoItStaysOutOfTheTaskbar() {
+    MainWindow window;
+    window.show();
+    auto &reg = window.promptTemplatesForTest();
+    PromptTemplate t;
+    t.name = QStringLiteral("Analyse");
+    t.text = QStringLiteral("Analysiere:");
+    reg.add(t);
+
+    auto *composer = window.findChild<Composer *>();
+    QVERIFY(composer);
+    auto *edit = composer->findChild<QPlainTextEdit *>();
+    QVERIFY(edit);
+    edit->setFocus();
+    QTest::keyClicks(edit, QStringLiteral("/"));
+
+    auto *menu = window.promptMenuForTest();
+    QVERIFY(menu);
+    QVERIFY(menu->isVisible());
+    QCOMPARE(menu->windowType(), Qt::Popup);
+}
+
 void TestMainWindow::promptMenuFiltersAndEnterConfirms() {
     MainWindow window;
     window.show();
