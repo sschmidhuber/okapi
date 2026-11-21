@@ -64,20 +64,25 @@ private slots:
 
 private:
     SettingsDialog *makeDialog();
+
+    // The dialog builds its pages lazily (on first tab selection), so the
+    // registries it points to must outlive the dialog — like in the app,
+    // where MainWindow owns them. Members, not makeDialog() locals.
+    BackendRegistry m_backends;
+    McpRegistry m_mcpRegistry;
+    McpManager m_mcpManager{&m_mcpRegistry};
+    SttRegistry m_sttRegistry;
+    TtsRegistry m_ttsRegistry;
+    SystemPrompt m_systemPrompt;
+    ShortcutRegistry m_shortcutRegistry;
+    UiSettings m_uiSettings;
+    PromptTemplateRegistry m_promptTemplates;
 };
 
 SettingsDialog *TestSettingsDialog::makeDialog() {
-    BackendRegistry backends;
-    McpRegistry mcpRegistry;
-    McpManager mcpManager(&mcpRegistry);
-    SttRegistry sttRegistry;
-    TtsRegistry ttsRegistry;
-    SystemPrompt systemPrompt;
-    ShortcutRegistry shortcutRegistry;
-    UiSettings uiSettings;
-    PromptTemplateRegistry promptTemplates;
-    return new SettingsDialog(&backends, &mcpRegistry, &mcpManager, &sttRegistry, &ttsRegistry,
-                              &systemPrompt, &shortcutRegistry, &uiSettings, &promptTemplates);
+    return new SettingsDialog(&m_backends, &m_mcpRegistry, &m_mcpManager, &m_sttRegistry,
+                              &m_ttsRegistry, &m_systemPrompt, &m_shortcutRegistry, &m_uiSettings,
+                              &m_promptTemplates);
 }
 
 void TestSettingsDialog::categoriesAreTopLevelItems() {

@@ -17,6 +17,7 @@
 #include <QDateTime>
 #include <QPair>
 
+#include <QAction>
 #include <QHash>
 #include <QLabel>
 #include <QList>
@@ -444,8 +445,10 @@ private:
     QSplitter *m_rightSplitter = nullptr;
     QWidget *m_composerColumn = nullptr;
     QToolBar *m_toolBar = nullptr;
-    QToolButton *m_newChatButton = nullptr;
-    QToolButton *m_settingsButton = nullptr;
+    // Toolbar entries are QActions in the .ui (Designer drops widget children
+    // of a QToolBar on save); the toolbar instantiates the buttons for them.
+    QAction *m_newChatButton = nullptr;
+    QAction *m_settingsButton = nullptr;
     ModelPickerButton *m_modelPicker = nullptr;
     QPushButton *m_sendButton = nullptr;
     QPushButton *m_stopButton = nullptr;

@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QStringList>
+#include <functional>
 #include <memory>
 
 class QListWidget;
@@ -49,9 +50,15 @@ private:
     // the given theme name, with the bundled SVG as fallback.
     void addCategory(const QString &title, const QString &categoryId, const QString &iconPath);
 
-    // Adds a page as a new tab of the most recently added category. The
-    // dialog takes ownership of the page.
-    void addTab(const QString &title, const QString &tabId, QWidget *page);
+    // Registers a page as a new tab of the most recently added category.
+    // The page is built lazily from the factory when its tab is first
+    // selected, so opening the dialog does not pay for pages (and their
+    // one-time costs, e.g. audio device enumeration on the STT/TTS pages)
+    // that the user never visits. The dialog takes ownership of the page.
+    void addTab(const QString &title, const QString &tabId, std::function<QWidget *()> factory);
+
+    // Builds the page behind the given tab if it is still a placeholder.
+    void ensureTabBuilt(QTabWidget *tabs, int index);
 
     // The dialog shell (splitter, category list, stacked pages, button box)
     // is loaded from ui/settingsdialog.ui (AUTOUIC).
@@ -62,6 +69,9 @@ private:
     QList<QTabWidget *> m_tabWidgets;
     QList<int> m_tabOffsets;
     QStringList m_tabIds;
+    QStringList m_tabTitles;
+    QList<std::function<QWidget *()>> m_tabFactories;
+    QList<bool> m_tabBuilt;
 };
 
 } // namespace okapi

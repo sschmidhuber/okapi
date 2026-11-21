@@ -3,14 +3,25 @@
 #include "backends/backendfactory.h"
 #include "backends/ibackend.h"
 #include "core/attachmentopener.h"
+#include "core/audiorecorder.h"
 #include "core/chatsession.h"
 #include "core/tooldebug.h"
+#include "core/ttsplayer.h"
 #include "storage/chatdatabase.h"
 #include "ui/composer.h"
 #include "ui/settingsdialog.h"
 #include "ui/sidebar.h"
 #include "ui/theme.h"
 #include "ui/webchatview.h"
+
+// The generated ui_mainwindow.h refers to the promoted widgets by their plain
+// class names (Qt Designer cannot handle namespaced class names and drops
+// them on save), so make the okapi:: names visible at global scope here.
+using okapi::Composer;
+using okapi::ModelPickerButton;
+using okapi::Sidebar;
+using okapi::WebChatView;
+
 #include "ui_mainwindow.h"
 
 #include <QApplication>
@@ -299,6 +310,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     connect(m_prefetchDrainTimer, &QTimer::timeout, this, [this]() { drainPrefetchResults(); });
     m_prefetchDrainTimer->start();
     QTimer::singleShot(kPrefetchDelayMs, this, [this]() { prefetchRecentSessions(); });
+    // Warm the audio backend once after startup: the first QMediaDevices
+    // query initializes PulseAudio/PipeWire and can block noticeably, which
+    // otherwise surfaces as a delay when the settings dialog's STT/TTS pages
+    // enumerate audio devices for the first time.
+    QTimer::singleShot(0, this, [] {
+        AudioRecorder::availableInputDevices();
+        TtsPlayer::availableOutputDevices();
+    });
 }
 
 void MainWindow::showEvent(QShowEvent *event) {
@@ -352,23 +371,18 @@ void MainWindow::setupUi() {
     m_ui->mainSplitter->setStretchFactor(1, 1);
     m_composerColumn->setMinimumHeight(UiSettings::kMinComposerHeight);
 
-    // The composer's mic/attach buttons live in the footer row, right after
-    // the spacer (footerLayout already holds picker, spacer, speak, cancel,
-    // send, stop from the .ui file).
-    m_composer->micButton()->setParent(m_ui->footerRow);
-    m_composer->attachButton()->setParent(m_ui->footerRow);
-    m_ui->footerLayout->insertWidget(2, m_composer->micButton());
-    m_ui->footerLayout->insertWidget(3, m_composer->attachButton());
-
-    m_statusLabel = new QLabel(statusBar());
+    // The mic/attach buttons and the status bar labels are declared in
+    // mainwindow.ui; the composer adopts the buttons and wires its signals.
+    m_composer->adoptToolButtons(m_ui->attachButton, m_ui->micButton);
+    m_statusLabel = m_ui->statusLabel;
     statusBar()->addPermanentWidget(m_statusLabel);
-    m_mcpStatusLabel = new QLabel(statusBar());
+    m_mcpStatusLabel = m_ui->mcpStatusLabel;
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
     setStatusBase(tr("Ready"));
 }
 
 void MainWindow::setupConnections() {
-    connect(m_newChatButton, &QToolButton::clicked, this, &MainWindow::onNewChat);
+    connect(m_newChatButton, &QAction::triggered, this, &MainWindow::onNewChat);
     createWindowShortcuts();
     m_composer->setDictateSequence(m_shortcuts.sequence(QStringLiteral("dictate")));
     m_composer->setPromptTriggerSequence(m_shortcuts.sequence(QStringLiteral("promptTemplates")));
@@ -411,7 +425,7 @@ void MainWindow::setupConnections() {
             m_composer->refreshTheme();
         }
     });
-    connect(m_settingsButton, &QToolButton::clicked, this, [this] { openSettings(QString()); });
+    connect(m_settingsButton, &QAction::triggered, this, [this] { openSettings(QString()); });
     setupComposerSplitter();
     connect(m_sidebar, &Sidebar::sessionSelected, this, &MainWindow::onSessionSelected);
     connect(m_sidebar, &Sidebar::sessionDeleteRequested, this,

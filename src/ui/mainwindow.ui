@@ -38,7 +38,7 @@
       <property name="handleWidth">
        <number>1</number>
       </property>
-      <widget class="okapi::Sidebar" name="sidebar">
+      <widget class="Sidebar" name="sidebar">
        <property name="minimumSize">
         <size>
          <width>200</width>
@@ -92,7 +92,7 @@
              <number>0</number>
             </property>
             <item>
-             <widget class="okapi::WebChatView" name="chatView"/>
+             <widget class="WebChatView" name="chatView"/>
             </item>
             <item>
              <widget class="QLabel" name="emptyLabel">
@@ -120,7 +120,7 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
              <number>4</number>
             </property>
             <item>
-             <widget class="okapi::Composer" name="composer"/>
+             <widget class="Composer" name="composer"/>
             </item>
             <item>
              <widget class="QWidget" name="footerRow">
@@ -129,7 +129,7 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
                 <number>6</number>
                </property>
                <item>
-                <widget class="okapi::ModelPickerButton" name="modelPicker">
+                <widget class="ModelPickerButton" name="modelPicker">
                  <property name="toolTip">
                   <string>Select model backend and model</string>
                  </property>
@@ -147,6 +147,32 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
                   </size>
                  </property>
                 </spacer>
+               </item>
+               <item>
+                <widget class="QToolButton" name="micButton">
+                 <property name="toolTip">
+                  <string>Dictate message (speech-to-text)</string>
+                 </property>
+                 <property name="accessibleName">
+                  <string>Dictate message</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="autoRaise">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QToolButton" name="attachButton">
+                 <property name="toolTip">
+                  <string>Attach images, documents or text files</string>
+                 </property>
+                 <property name="autoRaise">
+                  <bool>true</bool>
+                 </property>
+                </widget>
                </item>
                <item>
                 <widget class="QToolButton" name="speakButton">
@@ -232,46 +258,45 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <widget class="QToolButton" name="newChatButton">
-    <property name="text">
-     <string>New</string>
-    </property>
-    <property name="toolButtonStyle">
-     <enum>Qt::ToolButtonTextBesideIcon</enum>
-    </property>
-    <property name="toolTip">
-     <string>Start a new chat</string>
-    </property>
-   </widget>
-   <widget class="QToolButton" name="settingsButton">
-    <property name="text">
-     <string>Settings</string>
-    </property>
-    <property name="toolButtonStyle">
-     <enum>Qt::ToolButtonTextBesideIcon</enum>
-    </property>
-    <property name="toolTip">
-     <string>Open settings</string>
-    </property>
-   </widget>
+   <addaction name="newChatButton"/>
+   <addaction name="settingsButton"/>
   </widget>
-  <widget class="QStatusBar" name="statusbar"/>
+  <widget class="QStatusBar" name="statusbar">
+   <widget class="QLabel" name="statusLabel"/>
+   <widget class="QLabel" name="mcpStatusLabel"/>
+  </widget>
+  <action name="newChatButton">
+   <property name="text">
+    <string>New</string>
+   </property>
+   <property name="toolTip">
+    <string>Start a new chat</string>
+   </property>
+  </action>
+  <action name="settingsButton">
+   <property name="text">
+    <string>Settings</string>
+   </property>
+   <property name="toolTip">
+    <string>Open settings</string>
+   </property>
+  </action>
  </widget>
  <customwidgets>
   <customwidget>
-   <class>okapi::Sidebar</class>
+   <class>Sidebar</class>
    <header>ui/sidebar.h</header>
   </customwidget>
   <customwidget>
-   <class>okapi::WebChatView</class>
+   <class>WebChatView</class>
    <header>ui/webchatview.h</header>
   </customwidget>
   <customwidget>
-   <class>okapi::Composer</class>
+   <class>Composer</class>
    <header>ui/composer.h</header>
   </customwidget>
   <customwidget>
-   <class>okapi::ModelPickerButton</class>
+   <class>ModelPickerButton</class>
    <header>ui/mainwindow.h</header>
   </customwidget>
  </customwidgets>
