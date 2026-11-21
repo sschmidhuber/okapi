@@ -13,6 +13,8 @@
 #include <QVector>
 #include <QWidget>
 
+#include <memory>
+
 class QDragEnterEvent;
 class QDragLeaveEvent;
 class QDropEvent;
@@ -23,6 +25,10 @@ class QScrollArea;
 class QShortcut;
 
 class QToolButton;
+
+namespace Ui {
+class Composer;
+}
 
 namespace okapi {
 
@@ -47,6 +53,9 @@ class Composer : public QWidget {
 
 public:
     explicit Composer(QWidget *parent = nullptr);
+    // Defined in the .cpp (where Ui::Composer is complete) because of the
+    // unique_ptr member.
+    ~Composer() override;
 
     void setSendEnabled(bool enabled);
     void setBusy(bool busy);
@@ -158,6 +167,7 @@ private:
     [[nodiscard]] int promptTriggerTextLength() const;
     QToolButton *removeButton(QWidget *parent, const QUuid &id, bool isDocument);
 
+    std::unique_ptr<Ui::Composer> m_ui;
     MessageTextEdit *m_textEdit = nullptr;
     QToolButton *m_attachButton = nullptr;
     QToolButton *m_micButton = nullptr;

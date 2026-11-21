@@ -14,6 +14,10 @@ Designer files (CMake AUTOUIC generates `ui_*.h`):
 - **`src/ui/sidebar.ui`** — internal layout of the `Sidebar` promoted widget
   (the chat tree `tree` with its view/drag-drop properties); loaded via
   `Ui::Sidebar::setupUi()` in `Sidebar::Sidebar()`.
+- **`src/ui/composer.ui`** — internal layout of the `Composer` promoted
+  widget (attachment strip `attachmentStrip`/`attachmentLayout` + input row
+  with the promoted `MessageTextEdit` `textEdit`); loaded via
+  `Ui::Composer::setupUi()` in `Composer::Composer()`.
 
 Open them in Qt Widget Designer:
 

@@ -4,6 +4,13 @@
 #include "core/filepreview.h"
 #include "ui/theme.h"
 
+// The generated ui_composer.h refers to the promoted MessageTextEdit by its
+// plain class name (Qt Designer cannot handle namespaced class names), so
+// make the okapi:: name visible at global scope here.
+using okapi::MessageTextEdit;
+
+#include "ui_composer.h"
+
 #include <QApplication>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -176,52 +183,27 @@ void MessageTextEdit::insertFromMimeData(const QMimeData *source) {
     QPlainTextEdit::insertFromMimeData(source);
 }
 
+Composer::~Composer() = default;
+
 Composer::Composer(QWidget *parent) : QWidget(parent) {
-    // Drops are accepted on the whole composer (text edit, attachment strip,
-    // buttons), not only on the text edit; a highlight marks the drop target.
-    setAcceptDrops(true);
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(2);
+    // The widget tree (attachment strip + input row with the text edit) lives
+    // in composer.ui so it can be edited in Qt Designer; drops are accepted
+    // on the whole composer (acceptDrops is set there as well).
+    m_ui = std::make_unique<Ui::Composer>();
+    m_ui->setupUi(this);
+    m_attachmentStrip = m_ui->attachmentStrip;
+    m_attachmentLayout = m_ui->attachmentLayout;
+    m_textEdit = m_ui->textEdit;
 
     // Fixed-height horizontal scroll area: adding more attachments never
     // changes the strip height, so the text input keeps its size and the
     // chat area shrinks exactly once when the first file is added.
-    m_attachmentStrip = new QScrollArea(this);
-    m_attachmentStrip->setWidgetResizable(true);
-    m_attachmentStrip->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_attachmentStrip->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_attachmentStrip->setFrameShape(QFrame::NoFrame);
     // Reserve the style's real scrollbar extent so chips (thumbnail + name)
     // stay fully visible when the horizontal scrollbar appears.
     const int sbExtent = style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, this);
     m_stripHeight = kAttachmentStripBaseHeight + (sbExtent > 0 ? sbExtent : kScrollBarAllowance);
     m_attachmentStrip->setFixedHeight(m_stripHeight);
-    auto *stripContent = new QWidget(m_attachmentStrip);
-    m_attachmentLayout = new QHBoxLayout(stripContent);
-    m_attachmentLayout->setContentsMargins(4, 2, 4, 2);
-    m_attachmentLayout->setSpacing(4);
-    m_attachmentLayout->addStretch(1);
-    m_attachmentStrip->setWidget(stripContent);
-    m_attachmentStrip->hide();
-    layout->addWidget(m_attachmentStrip);
 
-    auto *row = new QWidget(this);
-    auto *rowLayout = new QHBoxLayout(row);
-    rowLayout->setContentsMargins(0, 0, 0, 0);
-    rowLayout->setSpacing(2);
-    m_textEdit = new MessageTextEdit(row);
-    // The mic/attach buttons are declared in mainwindow.ui and adopted via
-    // adoptToolButtons() once the parent's setupUi has created them; the
-    // text edit fills the composer row.
-    rowLayout->addWidget(m_textEdit, 1);
-    layout->addWidget(row);
-
-    m_textEdit->setAccessibleName(tr("Message input"));
-    m_textEdit->setPlaceholderText(
-        tr("Type a message…  (Enter to send, Shift+Enter for a new line)"));
-    m_textEdit->setTabChangesFocus(true);
-    m_textEdit->setAcceptDrops(true);
     // Full frame around the input, including the top side.
     m_textEdit->setStyleSheet(QStringLiteral("QPlainTextEdit { border: 1px solid palette(mid); }"));
     m_textEdit->setPalette(qApp->palette());

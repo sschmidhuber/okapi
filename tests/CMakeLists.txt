@@ -120,6 +120,7 @@ add_executable(tst_mainwindow tst_mainwindow.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/chatview.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/chatdelegate.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/composer.ui
     ${CMAKE_SOURCE_DIR}/src/ui/sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/backendpage.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/mcppage.cpp
