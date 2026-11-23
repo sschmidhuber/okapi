@@ -4,6 +4,7 @@
 #include "storage/chatdatabase.h"
 #include "ui/composer.h"
 #include "ui/mainwindow.h"
+#include "ui/settingsdialog.h"
 #include "ui/sidebar.h"
 #include "ui/theme.h"
 
@@ -18,8 +19,10 @@
 #include <QScreen>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QtTest>
@@ -161,6 +164,9 @@ private slots:
     void composerFollowsDarkPalette();
     void promptMenuOpensAtCaretAnchor();
     void promptMenuArrowKeysNavigateVisibleEntries();
+    void promptTemplateToolbarMenuListsRecentFirstAndInserts();
+    void promptTemplateToolbarMenuCapsAtTwentyPlusNewEntry();
+    void promptTemplateToolbarMenuNewEntryOpensPromptTemplatesPage();
     void startupShowsNewChatAndLoadsOldChatsOnDemand();
     void recentChatsArePrefetchedInBackground();
     void composerDraftIsPerChatAndRestoredOnSwitch();
@@ -898,6 +904,141 @@ void TestMainWindow::promptMenuArrowKeysNavigateVisibleEntries() {
     QTest::keyClick(edit, Qt::Key_Return);
     QCOMPARE(composer->text(), QStringLiteral("Recherche:"));
     QVERIFY(!menu->isVisible());
+}
+
+// The toolbar's "Prompt Template" dropdown lists the most recently used
+// templates first, then the never-used ones, a separator and "New prompt
+// template…"; triggering an entry inserts it into the composer and records
+// the usage.
+void TestMainWindow::promptTemplateToolbarMenuListsRecentFirstAndInserts() {
+    MainWindow window;
+    window.show();
+    auto &reg = window.promptTemplatesForTest();
+    // Templates persist in the shared test settings across tests in this
+    // process; start from a clean registry so the counts are deterministic.
+    for (const auto &t : reg.templates())
+        reg.remove(t.id);
+    PromptTemplate a;
+    a.name = QStringLiteral("Alpha");
+    a.text = QStringLiteral("alpha text");
+    const QUuid idA = reg.add(a).id;
+    PromptTemplate b;
+    b.name = QStringLiteral("Beta");
+    b.text = QStringLiteral("beta text");
+    reg.add(b);
+    PromptTemplate c;
+    c.name = QStringLiteral("Gamma");
+    c.text = QStringLiteral("gamma text");
+    const QUuid idC = reg.add(c).id;
+    reg.recordUsed(idA);
+    reg.recordUsed(idC); // most recent first: Gamma, Alpha, then unused Beta
+
+    auto *toolBar = window.findChild<QToolBar *>();
+    QVERIFY(toolBar);
+    auto *button = window.promptTemplateButtonForTest();
+    QVERIFY(button);
+    QCOMPARE(button->text(), QStringLiteral("Prompt Template"));
+    QCOMPARE(button->popupMode(), QToolButton::InstantPopup);
+    auto *menu = window.promptTemplateMenuForTest();
+    QVERIFY(menu);
+    QCOMPARE(button->menu(), menu);
+    // Between "New" and "Settings" in the top icon bar.
+    const QList<QAction *> toolBarActions = toolBar->actions();
+    QCOMPARE(toolBarActions.size(), 3);
+    QCOMPARE(toolBarActions.at(1), button->defaultAction());
+
+    window.rebuildPromptTemplateMenuForTest();
+    const QList<QAction *> actions = menu->actions();
+    QCOMPARE(actions.size(), 5); // 3 templates + separator + "New prompt template…"
+    QCOMPARE(actions.at(0)->text(), QStringLiteral("Gamma"));
+    QCOMPARE(actions.at(1)->text(), QStringLiteral("Alpha"));
+    QCOMPARE(actions.at(2)->text(), QStringLiteral("Beta"));
+    QVERIFY(actions.at(3)->isSeparator());
+    QCOMPARE(actions.at(4)->text(), QStringLiteral("New prompt template…"));
+    QVERIFY(actions.at(4)->data().toString().isEmpty());
+
+    // Triggering "Alpha" inserts its text into the composer and makes it the
+    // most recently used template.
+    auto *composer = window.findChild<Composer *>();
+    QVERIFY(composer);
+    actions.at(1)->trigger();
+    QCOMPARE(composer->text(), QStringLiteral("alpha text"));
+    QCOMPARE(reg.recentIds().first(), idA);
+}
+
+// With more than 20 used templates the dropdown is capped at the last 20
+// used entries plus "New prompt template…" (21 selectable entries).
+void TestMainWindow::promptTemplateToolbarMenuCapsAtTwentyPlusNewEntry() {
+    MainWindow window;
+    window.show();
+    auto &reg = window.promptTemplatesForTest();
+    for (const auto &t : reg.templates())
+        reg.remove(t.id);
+    QVector<QUuid> ids;
+    for (int i = 0; i < 25; ++i) {
+        PromptTemplate t;
+        t.name = QStringLiteral("T%1").arg(i);
+        t.text = QStringLiteral("text %1").arg(i);
+        ids.append(reg.add(t).id);
+    }
+    for (const QUuid &id : ids)
+        reg.recordUsed(id);
+
+    window.rebuildPromptTemplateMenuForTest();
+    auto *menu = window.promptTemplateMenuForTest();
+    QVERIFY(menu);
+    const QList<QAction *> actions = menu->actions();
+    QCOMPARE(actions.size(), 22); // 20 templates + separator + "New…"
+    int selectable = 0;
+    for (const QAction *action : actions) {
+        if (!action->isSeparator())
+            ++selectable;
+    }
+    QCOMPARE(selectable, 21);
+    // Most recently used first: T24 down to T5 (T0..T4 fell off the cap).
+    QCOMPARE(actions.at(0)->text(), QStringLiteral("T24"));
+    QCOMPARE(actions.at(19)->text(), QStringLiteral("T5"));
+    QVERIFY(actions.at(20)->isSeparator());
+    QCOMPARE(actions.at(21)->text(), QStringLiteral("New prompt template…"));
+}
+
+// Without any templates the dropdown shows a disabled placeholder plus "New
+// prompt template…", which opens the settings dialog on the Prompt
+// Templates page.
+void TestMainWindow::promptTemplateToolbarMenuNewEntryOpensPromptTemplatesPage() {
+    MainWindow window;
+    window.show();
+    auto &reg = window.promptTemplatesForTest();
+    for (const auto &t : reg.templates())
+        reg.remove(t.id);
+
+    window.rebuildPromptTemplateMenuForTest();
+    auto *menu = window.promptTemplateMenuForTest();
+    QVERIFY(menu);
+    const QList<QAction *> actions = menu->actions();
+    QCOMPARE(actions.size(), 3); // placeholder + separator + "New prompt template…"
+    QVERIFY(!actions.at(0)->isEnabled());
+    QVERIFY(actions.at(1)->isSeparator());
+    QAction *newAction = actions.at(2);
+    QCOMPARE(newAction->text(), QStringLiteral("New prompt template…"));
+
+    // openSettings() runs a modal dialog; inspect it from a timer inside its
+    // nested event loop and close it again.
+    bool sawPromptTemplatesTab = false;
+    QTimer::singleShot(0, [&sawPromptTemplatesTab]() {
+        auto *dialog = qobject_cast<SettingsDialog *>(QApplication::activeModalWidget());
+        QVERIFY(dialog);
+        if (!dialog)
+            return;
+        const auto tabsList = dialog->findChildren<QTabWidget *>();
+        for (const auto *tabs : tabsList) {
+            if (tabs->tabText(tabs->currentIndex()) == QStringLiteral("Prompt Templates"))
+                sawPromptTemplatesTab = true;
+        }
+        dialog->close();
+    });
+    newAction->trigger();
+    QVERIFY(sawPromptTemplatesTab);
 }
 
 // Seeds one stored chat with one message directly into the shared temp

@@ -9,6 +9,7 @@ namespace okapi {
 namespace {
 
 constexpr auto kTemplatesKey = "promptTemplates";
+constexpr auto kRecentKey = "promptTemplatesRecent";
 
 QJsonObject imageToJson(const ImageAttachment &image) {
     return {
@@ -119,11 +120,23 @@ void PromptTemplateRegistry::remove(const QUuid &id) {
     for (int i = 0; i < m_templates.size(); ++i) {
         if (m_templates.at(i).id == id) {
             m_templates.remove(i);
+            m_recentIds.removeAll(id);
             save();
             emit changed();
             return;
         }
     }
+}
+
+void PromptTemplateRegistry::recordUsed(const QUuid &id) {
+    if (id.isNull() || !find(id))
+        return;
+    m_recentIds.removeAll(id);
+    m_recentIds.prepend(id);
+    while (m_recentIds.size() > kMaxRecentTemplates)
+        m_recentIds.removeLast();
+    save();
+    emit changed();
 }
 
 void PromptTemplateRegistry::load(QSettings &settings) {
@@ -136,6 +149,15 @@ void PromptTemplateRegistry::load(QSettings &settings) {
         if (!t.id.isNull())
             m_templates.append(t);
     }
+    // Recent usage list: keep only ids that still exist, most recent first.
+    m_recentIds.clear();
+    const QJsonDocument recentDocument = QJsonDocument::fromJson(
+        settings.value(QString::fromLatin1(kRecentKey)).toString().toUtf8());
+    for (const auto &value : recentDocument.array()) {
+        const QUuid id(value.toString());
+        if (!id.isNull() && find(id) && !m_recentIds.contains(id))
+            m_recentIds.append(id);
+    }
     m_persistPath = settings.fileName();
     m_persistFormat = settings.format();
     emit changed();
@@ -147,6 +169,11 @@ void PromptTemplateRegistry::save(QSettings &settings) const {
         array.append(t.toJson());
     settings.setValue(QString::fromLatin1(kTemplatesKey),
                       QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact)));
+    QJsonArray recent;
+    for (const QUuid &id : m_recentIds)
+        recent.append(id.toString(QUuid::WithoutBraces));
+    settings.setValue(QString::fromLatin1(kRecentKey),
+                      QString::fromUtf8(QJsonDocument(recent).toJson(QJsonDocument::Compact)));
 }
 
 void PromptTemplateRegistry::save() const {

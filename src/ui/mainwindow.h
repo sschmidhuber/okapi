@@ -106,6 +106,11 @@ public:
     [[nodiscard]] ShortcutRegistry &shortcutsForTest() { return m_shortcuts; }
     [[nodiscard]] PromptTemplateRegistry &promptTemplatesForTest() { return m_promptTemplates; }
     [[nodiscard]] QWidget *promptMenuForTest() const { return m_promptMenu; }
+    [[nodiscard]] QMenu *promptTemplateMenuForTest() const { return m_promptTemplateMenu; }
+    [[nodiscard]] QToolButton *promptTemplateButtonForTest() const {
+        return m_promptTemplateToolButton;
+    }
+    void rebuildPromptTemplateMenuForTest() { rebuildPromptTemplateMenu(); }
     [[nodiscard]] ModelPickerButton *modelPickerForTest() const { return m_modelPicker; }
     // Feeds a detection result for one backend directly, without network.
     void simulateModelsDetectedForTest(const QString &backendId, const QStringList &models) {
@@ -171,6 +176,11 @@ private slots:
     // the composer keeps focus and keeps filtering while typing).
     void showPromptTemplateMenu();
     void onPromptFilterChanged(const QString &filter);
+    // Toolbar dropdown ("Prompt Template"): rebuilt before each show with
+    // the most recently used templates (up to 20) plus "New prompt
+    // template"; picking an entry inserts it into the composer.
+    void rebuildPromptTemplateMenu();
+    void onPromptTemplateMenuTriggered(QAction *action);
     // Arrow up/down while the popup is open: move the selection through the
     // visible (non-filtered) entries, wrapping at both ends.
     void navigatePromptMenu(int delta);
@@ -228,6 +238,9 @@ private slots:
 
 private:
     void setupUi();
+    // Turns the toolbar's promptTemplateButton action into a dropdown
+    // button with the template menu (icon, popup mode, menu wiring).
+    void setupPromptTemplateButton();
     void setupConnections();
     // Creates the window-level QShortcut objects from the sequences in the
     // shortcut registry; reapplyShortcuts() re-creates them after changes.
@@ -448,7 +461,12 @@ private:
     // Toolbar entries are QActions in the .ui (Designer drops widget children
     // of a QToolBar on save); the toolbar instantiates the buttons for them.
     QAction *m_newChatButton = nullptr;
+    QAction *m_promptTemplateButton = nullptr;
     QAction *m_settingsButton = nullptr;
+    // The toolbar instantiates a QToolButton for each action; the dropdown
+    // button is that widget, with the template menu attached.
+    QToolButton *m_promptTemplateToolButton = nullptr;
+    QMenu *m_promptTemplateMenu = nullptr;
     ModelPickerButton *m_modelPicker = nullptr;
     QPushButton *m_sendButton = nullptr;
     QPushButton *m_stopButton = nullptr;

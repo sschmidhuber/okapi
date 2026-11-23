@@ -340,6 +340,7 @@ void MainWindow::setupUi() {
 
     m_toolBar = m_ui->mainToolBar;
     m_newChatButton = m_ui->newChatButton;
+    m_promptTemplateButton = m_ui->promptTemplateButton;
     m_settingsButton = m_ui->settingsButton;
     m_sidebar = m_ui->sidebar;
     m_chatView = m_ui->chatView;
@@ -358,6 +359,7 @@ void MainWindow::setupUi() {
         themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
     m_settingsButton->setIcon(
         themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
+    setupPromptTemplateButton();
     const QKeySequence newChatSequence = m_shortcuts.sequence(QStringLiteral("newChat"));
     m_newChatButton->setToolTip(
         tr("Start a new chat (%1)").arg(newChatSequence.toString(QKeySequence::NativeText)));
@@ -380,6 +382,81 @@ void MainWindow::setupUi() {
     m_mcpStatusLabel = m_ui->mcpStatusLabel;
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
     setStatusBase(tr("Ready"));
+}
+
+void MainWindow::setupPromptTemplateButton() {
+    m_promptTemplateButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
+    // The toolbar instantiates one QToolButton per action; attach the menu
+    // to that button so a click opens the dropdown directly.
+    auto *button = qobject_cast<QToolButton *>(m_toolBar->widgetForAction(m_promptTemplateButton));
+    m_promptTemplateToolButton = button;
+    if (button) {
+        button->setPopupMode(QToolButton::InstantPopup);
+        m_promptTemplateMenu = new QMenu(button);
+        button->setMenu(m_promptTemplateMenu);
+    } else {
+        m_promptTemplateMenu = new QMenu(this);
+        m_promptTemplateButton->setMenu(m_promptTemplateMenu);
+    }
+    // The menu content depends on the recent-usage list, which changes while
+    // the window is open: rebuild it every time the dropdown is opened.
+    connect(m_promptTemplateMenu, &QMenu::aboutToShow, this,
+            &MainWindow::rebuildPromptTemplateMenu);
+    connect(m_promptTemplateMenu, &QMenu::triggered, this,
+            &MainWindow::onPromptTemplateMenuTriggered);
+}
+
+void MainWindow::rebuildPromptTemplateMenu() {
+    m_promptTemplateMenu->clear();
+    // Most recently used templates first, then the never-used ones in
+    // definition order; capped at kMaxRecentTemplates (plus the "New…"
+    // entry below, so at most 21 entries).
+    QSet<QUuid> listed;
+    QVector<const PromptTemplate *> ordered;
+    for (const QUuid &id : m_promptTemplates.recentIds()) {
+        if (const PromptTemplate *t = m_promptTemplates.find(id)) {
+            ordered.append(t);
+            listed.insert(id);
+        }
+    }
+    for (const auto &t : m_promptTemplates.templates()) {
+        if (!listed.contains(t.id)) {
+            ordered.append(&t);
+            listed.insert(t.id);
+        }
+    }
+    const auto count = static_cast<int>(
+        std::min<qsizetype>(ordered.size(), PromptTemplateRegistry::kMaxRecentTemplates));
+    if (count == 0) {
+        auto *empty = m_promptTemplateMenu->addAction(tr("No prompt templates yet"));
+        empty->setEnabled(false);
+    }
+    for (int i = 0; i < count; ++i) {
+        const PromptTemplate *t = ordered.at(i);
+        auto *action = m_promptTemplateMenu->addAction(t->name);
+        action->setData(t->id.toString(QUuid::WithoutBraces));
+        action->setToolTip(t->text.left(200));
+    }
+    m_promptTemplateMenu->addSeparator();
+    auto *newAction = m_promptTemplateMenu->addAction(tr("New prompt template…"));
+    // Empty data marks the "New prompt template" entry (template actions
+    // carry their id).
+    connect(newAction, &QAction::triggered, this,
+            [this] { openSettings(QStringLiteral("general/prompttemplates")); });
+}
+
+void MainWindow::onPromptTemplateMenuTriggered(QAction *action) {
+    const QString idString = action->data().toString();
+    if (idString.isEmpty())
+        return;
+    const QUuid id(idString);
+    const PromptTemplate *t = m_promptTemplates.find(id);
+    if (!t)
+        return;
+    m_promptTemplates.recordUsed(id);
+    m_composer->insertTemplate(t->text, t->images, t->files);
+    m_composer->focusInput();
 }
 
 void MainWindow::setupConnections() {
@@ -411,6 +488,8 @@ void MainWindow::setupConnections() {
         // Re-theme the toolbar and composer icons (recolored on load).
         m_newChatButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+        m_promptTemplateButton->setIcon(
+            themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
         m_settingsButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
         m_composer->refreshTheme();
@@ -421,6 +500,8 @@ void MainWindow::setupConnections() {
             m_chatView->setDarkMode(m_darkMode);
             m_newChatButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+            m_promptTemplateButton->setIcon(
+                themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
             m_settingsButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
             m_composer->refreshTheme();
@@ -1264,8 +1345,10 @@ void MainWindow::confirmPromptMenu(int row) {
     if (!item || item->isHidden())
         return;
     const QUuid id(item->data(Qt::UserRole).toString());
-    if (const PromptTemplate *t = m_promptTemplates.find(id))
+    if (const PromptTemplate *t = m_promptTemplates.find(id)) {
+        m_promptTemplates.recordUsed(id);
         m_composer->applyPromptTemplate(t->text, t->images, t->files);
+    }
     closePromptMenu();
 }
 

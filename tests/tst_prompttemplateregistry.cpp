@@ -15,6 +15,9 @@ private slots:
     void addUpdateRemoveFind();
     void changedSignalEmitted();
     void saveLoadRoundtripWithAttachments();
+    void recentUsageIsTrackedCappedAndPersisted();
+    void recordUsedIgnoresUnknownIds();
+    void removeDropsRecentEntryAndLoadDropsStaleIds();
 };
 
 void TestPromptTemplateRegistry::addUpdateRemoveFind() {
@@ -108,6 +111,120 @@ void TestPromptTemplateRegistry::saveLoadRoundtripWithAttachments() {
     QCOMPARE(restored->files.first().fileName, QStringLiteral("notes.txt"));
     QCOMPARE(restored->files.first().extractedText, QStringLiteral("some text"));
     QCOMPARE(restored->files.first().thumbnail, QByteArray("thumb"));
+}
+
+// recordUsed() keeps a most-recent-first list capped at
+// kMaxRecentTemplates, re-using an id moves it to the front, and the list
+// survives a save/load roundtrip.
+void TestPromptTemplateRegistry::recentUsageIsTrackedCappedAndPersisted() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("okapi.conf"));
+
+    PromptTemplateRegistry registry;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        registry.load(file);
+    }
+    QVector<QUuid> ids;
+    for (int i = 0; i < 25; ++i) {
+        PromptTemplate t;
+        t.name = QStringLiteral("T%1").arg(i);
+        t.text = QStringLiteral("text %1").arg(i);
+        ids.append(registry.add(t).id);
+    }
+    // Recorded in order 0..24: most recent first, so id 24 leads; the cap
+    // drops the oldest entries (ids 0..4 are gone, id 5 is the oldest kept).
+    for (const QUuid &id : ids)
+        registry.recordUsed(id);
+    QCOMPARE(registry.recentIds().size(), PromptTemplateRegistry::kMaxRecentTemplates);
+    QCOMPARE(registry.recentIds().first(), ids.constLast());
+    QCOMPARE(registry.recentIds().constLast(), ids.at(5));
+    QVERIFY(!registry.recentIds().contains(ids.at(4)));
+
+    // Re-using an id moves it to the front without duplicating it.
+    registry.recordUsed(ids.at(10));
+    QCOMPARE(registry.recentIds().size(), PromptTemplateRegistry::kMaxRecentTemplates);
+    QCOMPARE(registry.recentIds().first(), ids.at(10));
+    int occurrences = 0;
+    for (const QUuid &id : registry.recentIds()) {
+        if (id == ids.at(10))
+            ++occurrences;
+    }
+    QCOMPARE(occurrences, 1);
+
+    // The list is persisted: a fresh registry loading the same file sees
+    // the same ids in the same order.
+    PromptTemplateRegistry loaded;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        loaded.load(file);
+    }
+    QCOMPARE(loaded.recentIds().size(), registry.recentIds().size());
+    QVERIFY(loaded.recentIds() == registry.recentIds());
+}
+
+void TestPromptTemplateRegistry::recordUsedIgnoresUnknownIds() {
+    PromptTemplateRegistry registry;
+    QSignalSpy spy(&registry, &PromptTemplateRegistry::changed);
+    registry.recordUsed(QUuid::createUuid()); // unknown id: no-op
+    registry.recordUsed(QUuid());             // null id: no-op
+    QVERIFY(registry.recentIds().isEmpty());
+    QCOMPARE(spy.count(), 0);
+}
+
+// Removing a template also drops it from the recent list (and persists
+// that); on load, recent ids whose template no longer exists are dropped.
+void TestPromptTemplateRegistry::removeDropsRecentEntryAndLoadDropsStaleIds() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("okapi.conf"));
+
+    PromptTemplateRegistry registry;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        registry.load(file);
+    }
+    PromptTemplate a;
+    a.name = QStringLiteral("Alpha");
+    a.text = QStringLiteral("a");
+    const QUuid idA = registry.add(a).id;
+    PromptTemplate b;
+    b.name = QStringLiteral("Beta");
+    b.text = QStringLiteral("b");
+    const QUuid idB = registry.add(b).id;
+    registry.recordUsed(idA);
+    registry.recordUsed(idB);
+    QCOMPARE(registry.recentIds().first(), idB);
+
+    registry.remove(idB);
+    QCOMPARE(registry.recentIds().size(), 1);
+    QCOMPARE(registry.recentIds().first(), idA);
+
+    // Persisted removal: reload sees only idA.
+    PromptTemplateRegistry loaded;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        loaded.load(file);
+    }
+    QCOMPARE(loaded.recentIds().size(), 1);
+    QCOMPARE(loaded.recentIds().first(), idA);
+
+    // A stale recent id (template gone) in the settings file is dropped.
+    {
+        QSettings file(path, QSettings::IniFormat);
+        const QString stale = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        file.setValue(
+            QStringLiteral("promptTemplatesRecent"),
+            QStringLiteral("[\"%1\",\"%2\"]").arg(stale, idA.toString(QUuid::WithoutBraces)));
+    }
+    PromptTemplateRegistry loaded2;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        loaded2.load(file);
+    }
+    QCOMPARE(loaded2.recentIds().size(), 1);
+    QCOMPARE(loaded2.recentIds().first(), idA);
 }
 
 int main(int argc, char *argv[]) {
