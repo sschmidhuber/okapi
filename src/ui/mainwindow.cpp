@@ -1158,7 +1158,9 @@ void MainWindow::showPromptTemplateMenu() {
     // the keyboard focus, so typing on filters the list live ("/re" shows
     // only "Recherche"); Enter confirms the top entry.
     if (!m_promptMenu) {
-        m_promptMenu = new QFrame(this, Qt::Window | Qt::FramelessWindowHint);
+        // Qt::Popup (not Qt::Window): the popup is a menu-like override
+        // window, so the window manager does not list it in the taskbar.
+        m_promptMenu = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
         // Show without activating: the composer keeps focus and keyboard,
         // and the window-level shortcuts keep working while the menu is open.
         m_promptMenu->setAttribute(Qt::WA_ShowWithoutActivating);
