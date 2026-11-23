@@ -32,6 +32,10 @@ class PromptTemplateRegistry : public QObject {
     Q_OBJECT
 
 public:
+    // Maximum number of most-recently-used templates kept (and offered in
+    // the main window's "Prompt Template" toolbar dropdown).
+    static constexpr int kMaxRecentTemplates = 20;
+
     explicit PromptTemplateRegistry(QObject *parent = nullptr);
 
     [[nodiscard]] const QVector<PromptTemplate> &templates() const { return m_templates; }
@@ -42,6 +46,13 @@ public:
     void update(const PromptTemplate &tpl);
     void remove(const QUuid &id);
 
+    // Ids of the most recently used templates, most recent first (at most
+    // kMaxRecentTemplates); used for the toolbar dropdown's entry order.
+    [[nodiscard]] const QVector<QUuid> &recentIds() const { return m_recentIds; }
+    // Marks a template as used now: moves it to the front of the recent
+    // list (capped at kMaxRecentTemplates) and persists the list.
+    void recordUsed(const QUuid &id);
+
     void load(QSettings &settings);
     void save(QSettings &settings) const;
     void save() const;
@@ -51,6 +62,7 @@ signals:
 
 private:
     QVector<PromptTemplate> m_templates;
+    QVector<QUuid> m_recentIds;
     QString m_persistPath;
     QSettings::Format m_persistFormat = QSettings::IniFormat;
 };

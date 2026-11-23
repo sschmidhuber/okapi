@@ -259,6 +259,7 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
     <bool>false</bool>
    </attribute>
    <addaction name="newChatButton"/>
+   <addaction name="promptTemplateButton"/>
    <addaction name="settingsButton"/>
   </widget>
   <widget class="QStatusBar" name="statusbar">
@@ -271,6 +272,14 @@ Set up a backend via "Settings… → Model backends" to get started.</string>
    </property>
    <property name="toolTip">
     <string>Start a new chat</string>
+   </property>
+  </action>
+  <action name="promptTemplateButton">
+   <property name="text">
+    <string>Prompt Template</string>
+   </property>
+   <property name="toolTip">
+    <string>Insert a prompt template into the composer</string>
    </property>
   </action>
   <action name="settingsButton">
