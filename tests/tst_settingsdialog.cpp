@@ -97,6 +97,7 @@ private slots:
     void sidebarKeepsMaxWidthWhenDialogGrows();
     void systemPromptPagePreviewsMarkdownLive();
     void systemPromptPageFillsTabArea();
+    void initialTabBuiltOnShowNotInCtor();
 
 private:
     SettingsDialog *makeDialog();
@@ -492,6 +493,17 @@ void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<li>")));
     const QString updated = evalJs(preview->page(), contentExpr);
     QVERIFY(updated.contains(QStringLiteral("<strong>x</strong>")));
+}
+
+// Pages are built on demand: constructing the dialog must not build the
+// (web-preview heavy) first page; it is built in showEvent, before the modal
+// event loop starts (building it from a timer inside exec() broke the dialog
+// under X11/AT-SPI).
+void TestSettingsDialog::initialTabBuiltOnShowNotInCtor() {
+    std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    QVERIFY(!dialog->findChild<SystemPromptPage *>());
+    dialog->show();
+    QVERIFY(dialog->findChild<SystemPromptPage *>());
 }
 
 // Inside the real settings dialog the system prompt page must fill the tab

@@ -6,6 +6,7 @@
 #include <memory>
 
 class QListWidget;
+class QShowEvent;
 
 namespace Ui {
 class SettingsDialog;
@@ -44,6 +45,9 @@ public:
     // tabs, the tab with the given id ("llm", "stt", "tts", "mcp").
     void selectPage(const QString &pageId);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private:
     // Adds a top-level category to the sidebar; its pages can then be
     // registered with addTab(). The category shows the icon looked up under
@@ -59,6 +63,10 @@ private:
 
     // Builds the page behind the given tab if it is still a placeholder.
     void ensureTabBuilt(QTabWidget *tabs, int index);
+
+    // Builds the currently selected tab of the current category (called from
+    // showEvent() for the initial page and when the category changes).
+    void buildCurrentTab();
 
     // The dialog shell (splitter, category list, stacked pages, button box)
     // is loaded from ui/settingsdialog.ui (AUTOUIC).
