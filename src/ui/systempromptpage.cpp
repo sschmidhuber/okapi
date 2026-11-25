@@ -50,6 +50,11 @@ SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, UiSettings *uiSet
     m_ui->layout->setStretchFactor(m_ui->splitter, 1);
     m_ui->splitter->setStretchFactor(0, 1);
     m_ui->splitter->setStretchFactor(1, 1);
+    // Inside the panes the editor/web view take all free space, not the
+    // pane labels (QWebEngineView is only Preferred vertically by default,
+    // which would otherwise stretch the label above it).
+    m_ui->editorPaneLayout->setStretchFactor(m_editor, 1);
+    m_ui->previewPaneLayout->setStretchFactor(m_preview, 1);
 
     m_preview->settings()->setAttribute(QWebEngineSettings::ShowScrollBars, false);
     connect(m_preview, &QWebEngineView::loadFinished, this, [this](bool ok) {

@@ -525,6 +525,24 @@ void TestSettingsDialog::systemPromptPageFillsTabArea() {
     const int gapSmall = buttonRow->geometry().top() - splitter->geometry().bottom();
     QVERIFY2(gapSmall <= 12, qPrintable(QStringLiteral("gap=%1").arg(gapSmall)));
     QVERIFY(splitter->height() > page->height() * 7 / 10);
+
+    // Inside the panes the editor and the web view take all free vertical
+    // space; the pane labels stay single-line (a QWebEngineView is only
+    // Preferred vertically by default, which would stretch the label).
+    dialog->resize(1600, 800);
+    QTest::qWait(300);
+    auto *editorLabel = page->findChild<QLabel *>(QStringLiteral("editorLabel"));
+    auto *previewLabel = page->findChild<QLabel *>(QStringLiteral("previewLabel"));
+    auto *preview = page->findChild<QWebEngineView *>(QStringLiteral("preview"));
+    QVERIFY(editorLabel && previewLabel && preview);
+    QVERIFY2(previewLabel->height() <= 24,
+             qPrintable(QStringLiteral("previewLabel h=%1").arg(previewLabel->height())));
+    QVERIFY2(editorLabel->height() <= 24,
+             qPrintable(QStringLiteral("editorLabel h=%1").arg(editorLabel->height())));
+    QVERIFY2(preview->height() > splitter->height() * 8 / 10,
+             qPrintable(QStringLiteral("preview h=%1 splitter h=%2")
+                            .arg(preview->height())
+                            .arg(splitter->height())));
 }
 
 #include "tst_settingsdialog.moc"
