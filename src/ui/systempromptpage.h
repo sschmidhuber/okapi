@@ -9,14 +9,16 @@ class SystemPromptPage;
 
 class QPlainTextEdit;
 class QPushButton;
+class QTextEdit;
 
 namespace okapi {
 
 class SystemPrompt;
 
 // Settings page for the system prompt: edit the template (with the dynamic
-// fields {{date}}, {{time}}, {{language}}, {{os}}), preview it with the
-// fields substituted, save it, or reset it to the default.
+// fields {{date}}, {{time}}, {{language}}, {{os}}) in the top pane; the
+// bottom pane shows the substituted prompt rendered as Markdown, updated
+// live on every keystroke.
 class SystemPromptPage : public QWidget {
     Q_OBJECT
 
@@ -28,18 +30,21 @@ public:
 signals:
     void changed();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private slots:
     void onSave();
-    void onPreview();
     void onResetDefault();
 
 private:
+    void updatePreview();
+
     std::unique_ptr<Ui::SystemPromptPage> m_ui;
     SystemPrompt *m_systemPrompt;
     QPlainTextEdit *m_editor = nullptr;
-    QPlainTextEdit *m_preview = nullptr;
+    QTextEdit *m_preview = nullptr;
     QPushButton *m_saveButton = nullptr;
-    QPushButton *m_previewButton = nullptr;
     QPushButton *m_resetButton = nullptr;
 };
 

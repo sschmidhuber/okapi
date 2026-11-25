@@ -11,7 +11,43 @@
     </widget>
    </item>
    <item>
-    <widget class="QPlainTextEdit" name="editor"/>
+    <widget class="QSplitter" name="splitter">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <widget class="QWidget" name="editorPane">
+      <layout class="QVBoxLayout" name="editorPaneLayout">
+       <item>
+        <widget class="QLabel" name="editorLabel">
+         <property name="text">
+          <string>Prompt (Markdown)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPlainTextEdit" name="editor"/>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="previewPane">
+      <layout class="QVBoxLayout" name="previewPaneLayout">
+       <item>
+        <widget class="QLabel" name="previewLabel">
+         <property name="text">
+          <string>Preview (fields substituted, rendered as Markdown)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTextEdit" name="preview">
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
    </item>
    <item>
     <layout class="QHBoxLayout" name="buttonRow">
@@ -19,13 +55,6 @@
       <widget class="QPushButton" name="saveButton">
        <property name="text">
         <string>Save</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="previewButton">
-       <property name="text">
-        <string>Preview</string>
        </property>
       </widget>
      </item>
@@ -50,16 +79,6 @@
       </spacer>
      </item>
     </layout>
-   </item>
-   <item>
-    <widget class="QPlainTextEdit" name="preview">
-     <property name="readOnly">
-      <bool>true</bool>
-     </property>
-     <property name="placeholderText">
-      <string>Preview of the prompt with substituted fields</string>
-     </property>
-    </widget>
    </item>
   </layout>
  </widget>

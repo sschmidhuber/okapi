@@ -9,6 +9,7 @@
 #include "core/uisettings.h"
 #include "ui/mcppage.h"
 #include "ui/settingsdialog.h"
+#include "ui/systempromptpage.h"
 #include "ui/theme.h"
 #include "ui/userinterfacepage.h"
 
@@ -20,12 +21,17 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QRadioButton>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextEdit>
 #include <QtTest>
 
 #include <memory>
@@ -61,6 +67,7 @@ private slots:
     void themeComboAppliesImmediately();
     void themedIconFollowsPaletteInDarkMode();
     void sidebarKeepsMaxWidthWhenDialogGrows();
+    void systemPromptPagePreviewsMarkdownLive();
 
 private:
     SettingsDialog *makeDialog();
@@ -397,6 +404,49 @@ void TestSettingsDialog::mcpTransportSwitchHidesOtherGroupIncludingLabels() {
     QVERIFY(labelWithText(QStringLiteral("URL:"))->isVisibleTo(&page));
     QVERIFY(!cmdEdit->isVisibleTo(&page));
     QVERIFY(!labelWithText(QStringLiteral("Command:"))->isVisibleTo(&page));
+}
+
+// The system prompt page has no preview button: editor and preview are split
+// vertically and the preview renders the substituted prompt as Markdown,
+// updating live on every edit.
+void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
+    SystemPrompt prompt;
+    prompt.setText(QStringLiteral("# Title\n\nSome **bold** text with {{date}}"));
+    SystemPromptPage page(&prompt);
+    page.resize(640, 480);
+    page.show();
+
+    QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("previewButton")));
+
+    auto *splitter = page.findChild<QSplitter *>(QStringLiteral("splitter"));
+    QVERIFY(splitter);
+    QCOMPARE(splitter->orientation(), Qt::Vertical);
+    auto *editor = page.findChild<QPlainTextEdit *>(QStringLiteral("editor"));
+    auto *preview = page.findChild<QTextEdit *>(QStringLiteral("preview"));
+    QVERIFY(editor && preview);
+    QVERIFY(preview->isReadOnly());
+    QCOMPARE(splitter->widget(0), editor->parentWidget());
+    QCOMPARE(splitter->widget(1), preview->parentWidget());
+
+    // Initial content: fields substituted and rendered as Markdown, so the
+    // first block is a bold, enlarged heading and no {{...}} remains.
+    QVERIFY(!preview->document()->toPlainText().contains(QStringLiteral("{{")));
+    bool headingFormatted = false;
+    for (QTextBlock block = preview->document()->firstBlock(); block.isValid();
+         block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextCharFormat f = it.fragment().charFormat();
+            if (f.fontWeight() == QFont::Bold && f.fontPointSize() > 10.0)
+                headingFormatted = true;
+        }
+    }
+    QVERIFY(headingFormatted);
+
+    // Live update: editing re-renders the preview without pressing a button,
+    // and the document wraps at the pane width (no horizontal scrollbar).
+    editor->setPlainText(QStringLiteral("Plain line\n\n- bullet"));
+    QVERIFY(preview->document()->toPlainText().contains(QStringLiteral("bullet")));
+    QVERIFY(preview->horizontalScrollBar()->maximum() == 0);
 }
 
 #include "tst_settingsdialog.moc"

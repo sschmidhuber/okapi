@@ -1,14 +1,16 @@
 #include "ui/systempromptpage.h"
 #include "ui_systempromptpage.h"
 
+#include "core/markdown.h"
 #include "core/systemprompt.h"
 
 #include <QDir>
-#include <QLabel>
+#include <QEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTextEdit>
 
 namespace okapi {
 
@@ -21,15 +23,27 @@ SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, QWidget *parent)
     m_editor = m_ui->editor;
     m_preview = m_ui->preview;
     m_saveButton = m_ui->saveButton;
-    m_previewButton = m_ui->previewButton;
     m_resetButton = m_ui->resetButton;
 
+    m_ui->splitter->setStretchFactor(0, 1);
+    m_ui->splitter->setStretchFactor(1, 1);
+
     m_editor->setPlainText(m_systemPrompt->text());
-    m_preview->setPlaceholderText(tr("Preview of the prompt with substituted fields"));
 
     connect(m_saveButton, &QPushButton::clicked, this, &SystemPromptPage::onSave);
-    connect(m_previewButton, &QPushButton::clicked, this, &SystemPromptPage::onPreview);
     connect(m_resetButton, &QPushButton::clicked, this, &SystemPromptPage::onResetDefault);
+    connect(m_editor, &QPlainTextEdit::textChanged, this, &SystemPromptPage::updatePreview);
+    // The preview document is laid out for a fixed text width, so re-render
+    // when the preview pane changes width (dialog resize or splitter moved).
+    m_preview->viewport()->installEventFilter(this);
+
+    updatePreview();
+}
+
+bool SystemPromptPage::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_preview->viewport() && event->type() == QEvent::Resize)
+        updatePreview();
+    return QWidget::eventFilter(watched, event);
 }
 
 void SystemPromptPage::onSave() {
@@ -41,13 +55,15 @@ void SystemPromptPage::onSave() {
     emit changed();
 }
 
-void SystemPromptPage::onPreview() {
-    m_preview->setPlainText(SystemPrompt::substitute(m_editor->toPlainText()));
+void SystemPromptPage::onResetDefault() {
+    // textChanged fires, so the preview follows automatically.
+    m_editor->setPlainText(SystemPrompt::defaultTemplate());
 }
 
-void SystemPromptPage::onResetDefault() {
-    m_editor->setPlainText(SystemPrompt::defaultTemplate());
-    onPreview();
+void SystemPromptPage::updatePreview() {
+    const QString text = SystemPrompt::substitute(m_editor->toPlainText());
+    const int width = qMax(60, m_preview->viewport()->width());
+    m_preview->setDocument(MarkdownRenderer::render(text, width, m_preview->font()).release());
 }
 
 } // namespace okapi
