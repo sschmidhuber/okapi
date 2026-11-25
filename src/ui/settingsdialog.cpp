@@ -22,6 +22,7 @@
 
 #include <QDialogButtonBox>
 #include <QListWidget>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -45,7 +46,9 @@ SettingsDialog::SettingsDialog(BackendRegistry *backendRegistry, McpRegistry *mc
     addCategory(tr("General"), QStringLiteral("general"),
                 QStringLiteral(":/resources/icons/general.svg"));
     addTab(tr("System Prompt"), QStringLiteral("systemprompt"),
-           [systemPrompt, stack = m_stack] { return new SystemPromptPage(systemPrompt, stack); });
+           [systemPrompt, uiSettings, stack = m_stack] {
+               return new SystemPromptPage(systemPrompt, uiSettings, stack);
+           });
     addTab(tr("Prompt Templates"), QStringLiteral("prompttemplates"),
            [promptTemplates, stack = m_stack] {
                return new PromptTemplatesPage(promptTemplates, stack);
@@ -81,11 +84,27 @@ SettingsDialog::SettingsDialog(BackendRegistry *backendRegistry, McpRegistry *mc
     // list grow far beyond its maximum width until the handle was moved once.
     m_ui->splitter->setStretchFactor(0, 1);
 
-    connect(m_categories, &QListWidget::currentRowChanged, this,
-            [this](int row) { m_stack->setCurrentIndex(row); });
+    connect(m_categories, &QListWidget::currentRowChanged, this, [this](int row) {
+        m_stack->setCurrentIndex(row);
+        buildCurrentTab();
+    });
     connect(m_ui->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-    m_categories->setCurrentRow(0);
+    {
+        // Do not build the initial page in the constructor: a heavy first
+        // page (the system prompt's web preview) would delay constructing
+        // the dialog. It is built in showEvent() instead, still before the
+        // modal event loop starts (building it from a timer inside exec()
+        // broke the dialog under X11/AT-SPI, see PR history).
+        const QSignalBlocker blocker(m_categories);
+        m_categories->setCurrentRow(0);
+    }
+    m_stack->setCurrentIndex(0);
+}
+
+void SettingsDialog::showEvent(QShowEvent *event) {
+    QDialog::showEvent(event);
+    buildCurrentTab();
 }
 
 void SettingsDialog::selectPage(const QString &pageId) {
@@ -142,8 +161,20 @@ void SettingsDialog::addTab(const QString &title, const QString &tabId,
     m_tabIds.append(tabId);
     m_tabFactories.append(std::move(factory));
     m_tabBuilt.append(false);
-    // Placeholder page; replaced by the real page in ensureTabBuilt().
+    // Placeholder page; replaced by the real page in ensureTabBuilt(). The
+    // signal is blocked because adding the first tab emits currentChanged(0);
+    // pages are built on demand (showEvent for the initial page, category or
+    // tab changes afterwards) instead of eagerly at registration.
+    const QSignalBlocker blocker(tabs);
     tabs->addTab(new QWidget(tabs), title);
+}
+
+void SettingsDialog::buildCurrentTab() {
+    const int row = m_categories->currentRow();
+    if (row < 0 || row >= m_tabWidgets.size())
+        return;
+    auto *tabs = m_tabWidgets.at(row);
+    ensureTabBuilt(tabs, tabs->currentIndex());
 }
 
 void SettingsDialog::ensureTabBuilt(QTabWidget *tabs, int index) {

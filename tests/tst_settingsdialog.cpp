@@ -9,23 +9,33 @@
 #include "core/uisettings.h"
 #include "ui/mcppage.h"
 #include "ui/settingsdialog.h"
+#include "ui/systempromptpage.h"
 #include "ui/theme.h"
 #include "ui/userinterfacepage.h"
 
 #include <QApplication>
 #include <QComboBox>
+#include <QEventLoop>
 #include <QFile>
+#include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QRadioButton>
+#include <QSignalSpy>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTimer>
+#include <QUrl>
+#include <QWebEnginePage>
+#include <QWebEngineView>
 #include <QtTest>
 
 #include <memory>
@@ -46,6 +56,30 @@ QTabWidget *tabsOf(const SettingsDialog &dialog, int categoryRow) {
     return stack ? qobject_cast<QTabWidget *>(stack->widget(categoryRow)) : nullptr;
 }
 
+// Evaluates expr in the web page and returns the result as a string.
+QString evalJs(QWebEnginePage *page, const QString &expr) {
+    QString result;
+    QEventLoop loop;
+    QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+    page->runJavaScript(expr, [&result, &loop](const QVariant &v) {
+        result = v.toString();
+        loop.quit();
+    });
+    loop.exec();
+    return result;
+}
+
+// Polls expr until its result contains needle (the preview re-renders
+// asynchronously after each keystroke).
+bool waitForJs(QWebEnginePage *page, const QString &expr, const QString &needle) {
+    for (int i = 0; i < 100; ++i) {
+        if (evalJs(page, expr).contains(needle))
+            return true;
+        QTest::qWait(100);
+    }
+    return false;
+}
+
 } // namespace
 
 class TestSettingsDialog : public QObject {
@@ -61,6 +95,9 @@ private slots:
     void themeComboAppliesImmediately();
     void themedIconFollowsPaletteInDarkMode();
     void sidebarKeepsMaxWidthWhenDialogGrows();
+    void systemPromptPagePreviewsMarkdownLive();
+    void systemPromptPageFillsTabArea();
+    void initialTabBuiltOnShowNotInCtor();
 
 private:
     SettingsDialog *makeDialog();
@@ -131,6 +168,8 @@ void TestSettingsDialog::pagesAreTabsOfTheirCategory() {
 
 void TestSettingsDialog::shortcutsPageListsAllActions() {
     std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    // Pages are built on demand: select the shortcuts page first.
+    dialog->selectPage(QStringLiteral("shortcuts/shortcuts"));
     // Scope the lookup to the shortcuts tab: other pages (e.g. MCP) have
     // tables of their own.
     auto *shortcutsTabs = tabsOf(*dialog, 3);
@@ -255,11 +294,11 @@ void TestSettingsDialog::sidebarKeepsMaxWidthWhenDialogGrows() {
     QTest::qWait(200);
     QVERIFY(splitter->sizes().first() <= cats->maximumWidth());
 
+    dialog->selectPage(QStringLiteral("tools/mcp"));
+    QTest::qWait(200);
     auto *page = dialog->findChild<McpPage *>();
     if (!page)
         QFAIL("MCP page not found");
-    dialog->selectPage(QStringLiteral("tools/mcp"));
-    QTest::qWait(200);
     auto *inner = page->findChild<QSplitter *>();
     auto *srvList = page->findChild<QListWidget *>();
     if (!inner || !srvList)
@@ -269,6 +308,10 @@ void TestSettingsDialog::sidebarKeepsMaxWidthWhenDialogGrows() {
 
 int main(int argc, char *argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    // WebEngine needs these flags in containers without a user namespace
+    // (e.g. the sandbox); harmless on a normal desktop runner.
+    if (qEnvironmentVariableIsEmpty("QTWEBENGINE_CHROMIUM_FLAGS"))
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu --disable-dev-shm-usage");
     QApplication app(argc, argv);
     TestSettingsDialog test;
     return QTest::qExec(&test, argc, argv);
@@ -397,6 +440,126 @@ void TestSettingsDialog::mcpTransportSwitchHidesOtherGroupIncludingLabels() {
     QVERIFY(labelWithText(QStringLiteral("URL:"))->isVisibleTo(&page));
     QVERIFY(!cmdEdit->isVisibleTo(&page));
     QVERIFY(!labelWithText(QStringLiteral("Command:"))->isVisibleTo(&page));
+}
+
+// The system prompt page has no preview button: editor and preview sit side
+// by side in a horizontal splitter, and the preview is a web view that
+// renders the substituted prompt as Markdown, updated live on every edit.
+void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
+    SystemPrompt prompt;
+    prompt.setText(QStringLiteral("# Title\n\nSome **bold** text with {{date}}"));
+    UiSettings uiSettings;
+    SystemPromptPage page(&prompt, &uiSettings);
+    auto *preview = page.findChild<QWebEngineView *>(QStringLiteral("preview"));
+    QVERIFY(preview);
+    // The web page is loaded lazily on the first show, not in the ctor, so
+    // opening the settings dialog is not delayed by the WebEngine page.
+    QVERIFY(preview->url().isEmpty());
+    QSignalSpy loadSpy(preview, &QWebEngineView::loadFinished);
+    page.resize(800, 500);
+    page.show();
+    QCOMPARE(preview->url(), QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
+
+    QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("previewButton")));
+
+    auto *splitter = page.findChild<QSplitter *>(QStringLiteral("splitter"));
+    QVERIFY(splitter);
+    QCOMPARE(splitter->orientation(), Qt::Horizontal);
+    auto *editor = page.findChild<QPlainTextEdit *>(QStringLiteral("editor"));
+    QVERIFY(editor);
+    QCOMPARE(splitter->widget(0), editor->parentWidget());
+    QCOMPARE(splitter->widget(1), preview->parentWidget());
+
+    // The splitter fills the page vertically: only the layout spacing (not a
+    // large dead area) separates it from the button row below.
+    auto *buttonRow = page.findChild<QHBoxLayout *>(QStringLiteral("buttonRow"));
+    QVERIFY(buttonRow);
+    QTest::qWait(200);
+    const int gap = buttonRow->geometry().top() - splitter->geometry().bottom();
+    QVERIFY2(gap <= 12, qPrintable(QStringLiteral("gap=%1").arg(gap)));
+
+    // The preview page loads and renders the initial prompt as Markdown:
+    // heading and bold markup, with the {{date}} field substituted.
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QVERIFY(loadSpy.first().at(0).toBool());
+    const QString contentExpr = QStringLiteral("document.getElementById('content').innerHTML");
+    QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<h1")));
+    const QString initial = evalJs(preview->page(), contentExpr);
+    QVERIFY(initial.contains(QStringLiteral("<strong>bold</strong>")));
+    QVERIFY(!initial.contains(QStringLiteral("{{")));
+
+    // Live update: editing re-renders the preview without pressing a button.
+    editor->setPlainText(QStringLiteral("Plain line\n\n- bullet **x**"));
+    QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<li>")));
+    const QString updated = evalJs(preview->page(), contentExpr);
+    QVERIFY(updated.contains(QStringLiteral("<strong>x</strong>")));
+}
+
+// Pages are built on demand: constructing the dialog must not build the
+// (web-preview heavy) first page; it is built in showEvent, before the modal
+// event loop starts (building it from a timer inside exec() broke the dialog
+// under X11/AT-SPI).
+void TestSettingsDialog::initialTabBuiltOnShowNotInCtor() {
+    std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    QVERIFY(!dialog->findChild<SystemPromptPage *>());
+    dialog->show();
+    QVERIFY(dialog->findChild<SystemPromptPage *>());
+}
+
+// Inside the real settings dialog the system prompt page must fill the tab
+// area: no dead space between the splitter and the button row.
+void TestSettingsDialog::systemPromptPageFillsTabArea() {
+    std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    dialog->resize(1400, 800);
+    dialog->show();
+    QVERIFY(QTest::qWaitForWindowExposed(dialog.get()));
+    dialog->selectPage(QStringLiteral("general/systemprompt"));
+    QTest::qWait(300);
+
+    auto *page = dialog->findChild<SystemPromptPage *>();
+    QVERIFY(page);
+    auto *splitter = page->findChild<QSplitter *>(QStringLiteral("splitter"));
+    auto *buttonRow = page->findChild<QHBoxLayout *>(QStringLiteral("buttonRow"));
+    QVERIFY(splitter && buttonRow);
+    QVERIFY(page->height() > dialog->height() / 2);
+    // The splitter fills the page vertically: it takes most of the height
+    // and only the layout spacing separates it from the button row below.
+    const int gap = buttonRow->geometry().top() - splitter->geometry().bottom();
+    QVERIFY2(gap <= 12, qPrintable(QStringLiteral("gap=%1 page=%2x%3 dialog=%4x%5")
+                                       .arg(gap)
+                                       .arg(page->width())
+                                       .arg(page->height())
+                                       .arg(dialog->width())
+                                       .arg(dialog->height())));
+    QVERIFY2(
+        splitter->height() > page->height() * 7 / 10,
+        qPrintable(
+            QStringLiteral("splitter=%1 page=%2").arg(splitter->height()).arg(page->height())));
+
+    // Same at the dialog's default size (880x580): the splitter still fills.
+    dialog->resize(880, 580);
+    QTest::qWait(300);
+    const int gapSmall = buttonRow->geometry().top() - splitter->geometry().bottom();
+    QVERIFY2(gapSmall <= 12, qPrintable(QStringLiteral("gap=%1").arg(gapSmall)));
+    QVERIFY(splitter->height() > page->height() * 7 / 10);
+
+    // Inside the panes the editor and the web view take all free vertical
+    // space; the pane labels stay single-line (a QWebEngineView is only
+    // Preferred vertically by default, which would stretch the label).
+    dialog->resize(1600, 800);
+    QTest::qWait(300);
+    auto *editorLabel = page->findChild<QLabel *>(QStringLiteral("editorLabel"));
+    auto *previewLabel = page->findChild<QLabel *>(QStringLiteral("previewLabel"));
+    auto *preview = page->findChild<QWebEngineView *>(QStringLiteral("preview"));
+    QVERIFY(editorLabel && previewLabel && preview);
+    QVERIFY2(previewLabel->height() <= 24,
+             qPrintable(QStringLiteral("previewLabel h=%1").arg(previewLabel->height())));
+    QVERIFY2(editorLabel->height() <= 24,
+             qPrintable(QStringLiteral("editorLabel h=%1").arg(editorLabel->height())));
+    QVERIFY2(preview->height() > splitter->height() * 8 / 10,
+             qPrintable(QStringLiteral("preview h=%1 splitter h=%2")
+                            .arg(preview->height())
+                            .arg(splitter->height())));
 }
 
 #include "tst_settingsdialog.moc"

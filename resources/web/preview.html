@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="marked.min.js"></script>
+    <style>
+      :root {
+        color-scheme: light;
+        --fg: #1f2328;
+        --muted: #59636e;
+        --code-bg: #f6f8fa;
+        --border: #d1d9e0;
+        --link: #0969da;
+      }
+      html.dark {
+        color-scheme: dark;
+        --fg: #e6edf3;
+        --muted: #9198a1;
+        --code-bg: #151b23;
+        --border: #3d444d;
+        --link: #4493f8;
+      }
+      body {
+        margin: 0;
+        padding: 8px 12px;
+        color: var(--fg);
+        background: transparent;
+        font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      #content > :first-child {
+        margin-top: 0;
+      }
+      #content > :last-child {
+        margin-bottom: 0;
+      }
+      h1,
+      h2 {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 0.2em;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: var(--code-bg);
+        padding: 0.1em 0.3em;
+        border-radius: 4px;
+      }
+      pre {
+        background: var(--code-bg);
+        padding: 8px 10px;
+        border-radius: 6px;
+        overflow-x: auto;
+      }
+      pre code {
+        background: transparent;
+        padding: 0;
+      }
+      blockquote {
+        margin: 0;
+        padding: 0 1em;
+        color: var(--muted);
+        border-left: 3px solid var(--border);
+      }
+      a {
+        color: var(--link);
+      }
+      table {
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border: 1px solid var(--border);
+        padding: 4px 8px;
+      }
+    </style>
+    <script>
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+      });
+
+      function escapeHtml(s) {
+        return s
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      // Renders the (already substituted) prompt as markdown. Raw HTML in
+      // the prompt is escaped first, like for user messages in the chat, so
+      // it cannot inject markup into the page.
+      function renderPreview(text) {
+        const el = document.getElementById('content');
+        el.innerHTML = text ? marked.parse(escapeHtml(text)) : '';
+      }
+
+      function setTheme(dark) {
+        document.documentElement.classList.toggle('dark', dark);
+      }
+    </script>
+  </head>
+  <body>
+    <div id="content"></div>
+  </body>
+</html>

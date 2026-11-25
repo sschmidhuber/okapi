@@ -108,8 +108,20 @@ add_executable(tst_settingsdialog tst_settingsdialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/prompttemplatespage.ui
     ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp)
 target_include_directories(tst_settingsdialog PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(tst_settingsdialog PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::Svg)
+target_link_libraries(tst_settingsdialog PRIVATE okapi-core Qt6::Test Qt6::Widgets Qt6::WebEngineWidgets Qt6::Svg)
 add_test(NAME tst_settingsdialog COMMAND tst_settingsdialog)
+
+# The system prompt page's preview is a QWebEngineView loading
+# qrc:/resources/web/preview.html, so the test embeds the web assets.
+foreach(web_asset preview.html marked.min.js)
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/resources/web/${web_asset}
+        PROPERTIES QT_RESOURCE_ALIAS "resources/web/${web_asset}")
+endforeach()
+qt_add_resources(tst_settingsdialog "tst_settingsdialog_web"
+    PREFIX "/"
+    FILES
+        ${CMAKE_SOURCE_DIR}/resources/web/preview.html
+        ${CMAKE_SOURCE_DIR}/resources/web/marked.min.js)
 
 # MainWindow lives in the application target; the test compiles it directly
 # like tst_settingsdialog and needs the UI sources it pulls in.
