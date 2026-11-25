@@ -20,7 +20,6 @@
 using okapi::Composer;
 using okapi::ModelPickerButton;
 using okapi::Sidebar;
-using okapi::WebChatView;
 
 #include "ui_mainwindow.h"
 
@@ -329,6 +328,11 @@ void MainWindow::showEvent(QShowEvent *event) {
     if (m_composer)
         m_composer->focusInput();
     applyComposerHeight();
+    // Lazy-load the WebEngine chat view only once the window is shown:
+    // creating the QWebEngineView initializes Qt WebEngine (browser/render
+    // process, chat.html with its JS libraries) and would otherwise delay
+    // the first paint.
+    QTimer::singleShot(0, this, [this]() { ensureChatView(); });
 }
 
 void MainWindow::setupUi() {
@@ -343,7 +347,6 @@ void MainWindow::setupUi() {
     m_promptTemplateButton = m_ui->promptTemplateButton;
     m_settingsButton = m_ui->settingsButton;
     m_sidebar = m_ui->sidebar;
-    m_chatView = m_ui->chatView;
     m_emptyLabel = m_ui->emptyLabel;
     m_composer = m_ui->composer;
     m_composerColumn = m_ui->composerColumn;
@@ -382,6 +385,22 @@ void MainWindow::setupUi() {
     m_mcpStatusLabel = m_ui->mcpStatusLabel;
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
     setStatusBase(tr("Ready"));
+}
+
+void MainWindow::ensureChatView() {
+    if (m_chatView)
+        return;
+    // The chat view is deliberately not a promoted widget in
+    // mainwindow.ui: it is created here, after the window has been shown, so
+    // Qt WebEngine startup does not block the first paint.
+    m_chatView = new WebChatView(m_ui->chatViewHost);
+    m_ui->chatMarginLayout->insertWidget(0, m_chatView);
+    // Apply the state that was set before the view existed.
+    m_chatView->setShowThroughput(m_uiSettings.showThroughput());
+    m_chatView->setDarkMode(m_darkMode);
+    m_chatView->setSession(m_currentSession);
+    m_chatView->setVisible(!m_emptyLabel->isVisible());
+    setupChatViewConnections();
 }
 
 void MainWindow::setupPromptTemplateButton() {
@@ -477,14 +496,18 @@ void MainWindow::setupConnections() {
             closePromptMenu();
     });
     connect(&m_shortcuts, &ShortcutRegistry::changed, this, &MainWindow::reapplyShortcuts);
-    m_chatView->setShowThroughput(m_uiSettings.showThroughput());
-    connect(&m_uiSettings, &UiSettings::changed, this,
-            [this]() { m_chatView->setShowThroughput(m_uiSettings.showThroughput()); });
+    // The chat view is created lazily (ensureChatView()); until then the
+    // m_chatView calls below are skipped and the current state is applied
+    // when the view is created.
+    connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
+        if (m_chatView)
+            m_chatView->setShowThroughput(m_uiSettings.showThroughput());
+    });
     // Theme: applied immediately; in Auto mode also follow live OS changes.
-    m_chatView->setDarkMode(m_darkMode);
     connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
         m_darkMode = applyTheme(m_uiSettings.theme());
-        m_chatView->setDarkMode(m_darkMode);
+        if (m_chatView)
+            m_chatView->setDarkMode(m_darkMode);
         // Re-theme the toolbar and composer icons (recolored on load).
         m_newChatButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
@@ -497,7 +520,8 @@ void MainWindow::setupConnections() {
     connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this](Qt::ColorScheme) {
         if (m_uiSettings.theme() == UiSettings::Theme::Auto) {
             m_darkMode = applyTheme(UiSettings::Theme::Auto);
-            m_chatView->setDarkMode(m_darkMode);
+            if (m_chatView)
+                m_chatView->setDarkMode(m_darkMode);
             m_newChatButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
             m_promptTemplateButton->setIcon(
@@ -582,7 +606,6 @@ void MainWindow::setupConnections() {
         showTransientStatus(tr("Text-to-speech failed: %1").arg(message), 10000);
     });
     connect(m_speakButton, &QPushButton::clicked, this, &MainWindow::onSpeakResponsesToggled);
-    setupChatViewConnections();
     connect(m_sendButton, &QPushButton::clicked, this, [this]() {
         if (m_composer->isEmpty())
             return;
@@ -590,7 +613,6 @@ void MainWindow::setupConnections() {
     });
     connect(m_stopButton, &QPushButton::clicked, this, &MainWindow::onStop);
     connect(m_cancelEditButton, &QPushButton::clicked, this, &MainWindow::cancelEditMessage);
-    connect(m_chatView, &WebChatView::messageEditRequested, this, &MainWindow::startEditMessage);
     connect(m_modelPicker, &ModelPickerButton::backendSelected, this, [this](const QString &id) {
         if (m_currentSession && !id.isEmpty()) {
             m_currentSession->setBackendId(id);
@@ -724,7 +746,10 @@ void MainWindow::onSessionSelected(const QUuid &id) {
     // already prefetched in the background by then).
     if (m_currentSession)
         loadInitialMessages(m_currentSession);
-    m_chatView->setSession(m_currentSession);
+    // The chat view may not exist yet (lazy creation after the window is
+    // shown); ensureChatView() applies the current session when it does.
+    if (m_chatView)
+        m_chatView->setSession(m_currentSession);
     m_sidebar->selectSession(id);
     // The composer now shows the newly selected chat's unsent draft.
     loadDraftIntoComposer();
@@ -809,7 +834,8 @@ void MainWindow::softDeleteSession(const QUuid &id) {
     m_unreadSessions.remove(id);
     if (session == m_currentSession) {
         m_currentSession = nullptr;
-        m_chatView->setSession(nullptr);
+        if (m_chatView)
+            m_chatView->setSession(nullptr);
     }
     refreshSidebar();
     if (!m_currentSession)
@@ -1037,7 +1063,8 @@ void MainWindow::deleteSession(const QUuid &id) {
             cancelContext(*it);
             if (*it == m_currentSession) {
                 m_currentSession = nullptr;
-                m_chatView->setSession(nullptr);
+                if (m_chatView)
+                    m_chatView->setSession(nullptr);
             }
             if (m_database.isOpen())
                 m_database.deleteSession((*it)->id().toString(QUuid::WithoutBraces));
@@ -1054,7 +1081,10 @@ void MainWindow::deleteSession(const QUuid &id) {
         updateEmptyState();
 }
 
+// Wires the chat view's signals; called from ensureChatView() once the view
+// exists (it is created lazily, after the window is shown).
 void MainWindow::setupChatViewConnections() {
+    connect(m_chatView, &WebChatView::messageEditRequested, this, &MainWindow::startEditMessage);
     connect(m_chatView, &WebChatView::olderMessagesRequested, this,
             [this]() { loadOlderMessages(m_currentSession); });
     // Links in chat messages open in the default web browser (http/https
@@ -1507,7 +1537,8 @@ void MainWindow::loadOlderMessages(ChatSession *session) {
     }
     if (!older.isEmpty()) {
         session->prependMessages(older);
-        m_chatView->prependMessages(older);
+        if (m_chatView)
+            m_chatView->prependMessages(older);
         // Track how many DB rows sit above the live tail: previously paged-in
         // history plus the live messages themselves.
         session->setProperty("okapi_loadedCount", session->property("okapi_loadedCount").toInt() +
@@ -1590,7 +1621,7 @@ void MainWindow::applyPrefetchedMessages(const QString &sessionId,
             appendStoredMessage(session, stored);
         session->setProperty("okapi_loadedCount", loadedCount);
         session->setProperty("okapi_messagesLoaded", true);
-        if (session == m_currentSession)
+        if (m_chatView && session == m_currentSession)
             m_chatView->setSession(m_currentSession);
         return;
     }
@@ -2646,7 +2677,8 @@ void MainWindow::updateEmptyState() {
     const bool noBackends = m_registry.backends().isEmpty();
     const bool noSession = m_currentSession == nullptr;
     m_emptyLabel->setVisible(noBackends || noSession);
-    m_chatView->setVisible(!m_emptyLabel->isVisible());
+    if (m_chatView)
+        m_chatView->setVisible(!m_emptyLabel->isVisible());
     if (noBackends)
         m_emptyLabel->setText(tr("No backends configured yet.\n\n"
                                  "Open \"Settings… → Model backends\" to add Ollama, llama.cpp,\n"

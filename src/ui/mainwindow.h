@@ -238,6 +238,12 @@ private slots:
 
 private:
     void setupUi();
+    // Creates the WebEngine-backed chat view on first use (after the window
+    // has been shown, see showEvent): constructing a QWebEngineView
+    // initializes Qt WebEngine and loads chat.html, which must not delay
+    // the first paint. Until then m_chatView is null and the chat-area
+    // code paths skip the view.
+    void ensureChatView();
     // Turns the toolbar's promptTemplateButton action into a dropdown
     // button with the template menu (icon, popup mode, menu wiring).
     void setupPromptTemplateButton();

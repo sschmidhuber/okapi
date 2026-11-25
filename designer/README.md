@@ -36,9 +36,13 @@ resolve in the generated header.
 | Widget in .ui | Class in .ui | Real class |
 |---|---|---|
 | `sidebar` | `Sidebar` | `okapi::Sidebar` (`ui/sidebar.h`) |
-| `chatView` | `WebChatView` | `okapi::WebChatView` (`ui/webchatview.h`) |
 | `composer` | `Composer` | `okapi::Composer` (`ui/composer.h`) |
 | `modelPicker` | `ModelPickerButton` | `okapi::ModelPickerButton` (`ui/mainwindow.h`) |
+
+The chat area's `WebChatView` is intentionally **not** a promoted widget in
+`mainwindow.ui`: it is created lazily in code (`MainWindow::ensureChatView()`,
+after the window is shown) so Qt WebEngine startup does not delay the first
+paint.
 
 The footer row (`micButton`, `attachButton`) and the status bar labels
 (`statusLabel`, `mcpStatusLabel`) are declared in `mainwindow.ui` as well;
