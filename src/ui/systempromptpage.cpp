@@ -11,6 +11,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSizePolicy>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QWebEngineSettings>
@@ -42,6 +43,11 @@ SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, UiSettings *uiSet
     m_saveButton = m_ui->saveButton;
     m_resetButton = m_ui->resetButton;
 
+    // A horizontal splitter is only Expanding along its orientation, so
+    // without this the page layout would not give it the free vertical space
+    // (the dead area between splitter and button row).
+    m_ui->splitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_ui->layout->setStretchFactor(m_ui->splitter, 1);
     m_ui->splitter->setStretchFactor(0, 1);
     m_ui->splitter->setStretchFactor(1, 1);
 

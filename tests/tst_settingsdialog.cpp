@@ -17,6 +17,7 @@
 #include <QComboBox>
 #include <QEventLoop>
 #include <QFile>
+#include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -95,6 +96,7 @@ private slots:
     void themedIconFollowsPaletteInDarkMode();
     void sidebarKeepsMaxWidthWhenDialogGrows();
     void systemPromptPagePreviewsMarkdownLive();
+    void systemPromptPageFillsTabArea();
 
 private:
     SettingsDialog *makeDialog();
@@ -462,6 +464,14 @@ void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     QCOMPARE(splitter->widget(1), preview->parentWidget());
     QCOMPARE(preview->url(), QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
 
+    // The splitter fills the page vertically: only the layout spacing (not a
+    // large dead area) separates it from the button row below.
+    auto *buttonRow = page.findChild<QHBoxLayout *>(QStringLiteral("buttonRow"));
+    QVERIFY(buttonRow);
+    QTest::qWait(200);
+    const int gap = buttonRow->geometry().top() - splitter->geometry().bottom();
+    QVERIFY2(gap <= 12, qPrintable(QStringLiteral("gap=%1").arg(gap)));
+
     // The preview page loads and renders the initial prompt as Markdown:
     // heading and bold markup, with the {{date}} field substituted.
     QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
@@ -477,6 +487,44 @@ void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<li>")));
     const QString updated = evalJs(preview->page(), contentExpr);
     QVERIFY(updated.contains(QStringLiteral("<strong>x</strong>")));
+}
+
+// Inside the real settings dialog the system prompt page must fill the tab
+// area: no dead space between the splitter and the button row.
+void TestSettingsDialog::systemPromptPageFillsTabArea() {
+    std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    dialog->resize(1400, 800);
+    dialog->show();
+    QVERIFY(QTest::qWaitForWindowExposed(dialog.get()));
+    dialog->selectPage(QStringLiteral("general/systemprompt"));
+    QTest::qWait(300);
+
+    auto *page = dialog->findChild<SystemPromptPage *>();
+    QVERIFY(page);
+    auto *splitter = page->findChild<QSplitter *>(QStringLiteral("splitter"));
+    auto *buttonRow = page->findChild<QHBoxLayout *>(QStringLiteral("buttonRow"));
+    QVERIFY(splitter && buttonRow);
+    QVERIFY(page->height() > dialog->height() / 2);
+    // The splitter fills the page vertically: it takes most of the height
+    // and only the layout spacing separates it from the button row below.
+    const int gap = buttonRow->geometry().top() - splitter->geometry().bottom();
+    QVERIFY2(gap <= 12, qPrintable(QStringLiteral("gap=%1 page=%2x%3 dialog=%4x%5")
+                                       .arg(gap)
+                                       .arg(page->width())
+                                       .arg(page->height())
+                                       .arg(dialog->width())
+                                       .arg(dialog->height())));
+    QVERIFY2(
+        splitter->height() > page->height() * 7 / 10,
+        qPrintable(
+            QStringLiteral("splitter=%1 page=%2").arg(splitter->height()).arg(page->height())));
+
+    // Same at the dialog's default size (880x580): the splitter still fills.
+    dialog->resize(880, 580);
+    QTest::qWait(300);
+    const int gapSmall = buttonRow->geometry().top() - splitter->geometry().bottom();
+    QVERIFY2(gapSmall <= 12, qPrintable(QStringLiteral("gap=%1").arg(gapSmall)));
+    QVERIFY(splitter->height() > page->height() * 7 / 10);
 }
 
 #include "tst_settingsdialog.moc"
