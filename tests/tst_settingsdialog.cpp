@@ -97,6 +97,7 @@ private slots:
     void sidebarKeepsMaxWidthWhenDialogGrows();
     void systemPromptPagePreviewsMarkdownLive();
     void systemPromptPageFillsTabArea();
+    void initialTabBuiltAfterShow();
 
 private:
     SettingsDialog *makeDialog();
@@ -167,6 +168,8 @@ void TestSettingsDialog::pagesAreTabsOfTheirCategory() {
 
 void TestSettingsDialog::shortcutsPageListsAllActions() {
     std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    // Pages are built on demand: select the shortcuts page first.
+    dialog->selectPage(QStringLiteral("shortcuts/shortcuts"));
     // Scope the lookup to the shortcuts tab: other pages (e.g. MCP) have
     // tables of their own.
     auto *shortcutsTabs = tabsOf(*dialog, 3);
@@ -291,11 +294,11 @@ void TestSettingsDialog::sidebarKeepsMaxWidthWhenDialogGrows() {
     QTest::qWait(200);
     QVERIFY(splitter->sizes().first() <= cats->maximumWidth());
 
+    dialog->selectPage(QStringLiteral("tools/mcp"));
+    QTest::qWait(200);
     auto *page = dialog->findChild<McpPage *>();
     if (!page)
         QFAIL("MCP page not found");
-    dialog->selectPage(QStringLiteral("tools/mcp"));
-    QTest::qWait(200);
     auto *inner = page->findChild<QSplitter *>();
     auto *srvList = page->findChild<QListWidget *>();
     if (!inner || !srvList)
@@ -449,9 +452,13 @@ void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     SystemPromptPage page(&prompt, &uiSettings);
     auto *preview = page.findChild<QWebEngineView *>(QStringLiteral("preview"));
     QVERIFY(preview);
+    // The web page is loaded lazily on the first show, not in the ctor, so
+    // opening the settings dialog is not delayed by the WebEngine page.
+    QVERIFY(preview->url().isEmpty());
     QSignalSpy loadSpy(preview, &QWebEngineView::loadFinished);
     page.resize(800, 500);
     page.show();
+    QCOMPARE(preview->url(), QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
 
     QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("previewButton")));
 
@@ -462,7 +469,6 @@ void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     QVERIFY(editor);
     QCOMPARE(splitter->widget(0), editor->parentWidget());
     QCOMPARE(splitter->widget(1), preview->parentWidget());
-    QCOMPARE(preview->url(), QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
 
     // The splitter fills the page vertically: only the layout spacing (not a
     // large dead area) separates it from the button row below.
@@ -487,6 +493,16 @@ void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<li>")));
     const QString updated = evalJs(preview->page(), contentExpr);
     QVERIFY(updated.contains(QStringLiteral("<strong>x</strong>")));
+}
+
+// Pages are built on demand: constructing the dialog must not build the
+// (web-preview heavy) first page synchronously; it appears after show().
+void TestSettingsDialog::initialTabBuiltAfterShow() {
+    std::unique_ptr<SettingsDialog> dialog(makeDialog());
+    QVERIFY(!dialog->findChild<SystemPromptPage *>());
+    dialog->show();
+    QVERIFY(QTest::qWaitForWindowExposed(dialog.get()));
+    QTRY_VERIFY_WITH_TIMEOUT(dialog->findChild<SystemPromptPage *>() != nullptr, 5000);
 }
 
 // Inside the real settings dialog the system prompt page must fill the tab

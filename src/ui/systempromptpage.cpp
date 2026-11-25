@@ -76,7 +76,16 @@ SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, UiSettings *uiSet
         applyDarkMode();
     }
 
-    m_preview->setUrl(QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
+    // The preview page is loaded on the first showEvent, not here: creating
+    // the web view's page is what makes opening the settings dialog slow.
+}
+
+void SystemPromptPage::showEvent(QShowEvent *event) {
+    QWidget::showEvent(event);
+    if (!m_urlLoaded) {
+        m_urlLoaded = true;
+        m_preview->setUrl(QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
+    }
 }
 
 void SystemPromptPage::onSave() {

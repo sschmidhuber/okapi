@@ -32,6 +32,9 @@ public:
 signals:
     void changed();
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
     void onSave();
     void onResetDefault();
@@ -49,6 +52,7 @@ private:
     QPushButton *m_saveButton = nullptr;
     QPushButton *m_resetButton = nullptr;
     bool m_previewReady = false;
+    bool m_urlLoaded = false;
     bool m_darkMode = false;
 };
 

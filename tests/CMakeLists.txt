@@ -113,7 +113,7 @@ add_test(NAME tst_settingsdialog COMMAND tst_settingsdialog)
 
 # The system prompt page's preview is a QWebEngineView loading
 # qrc:/resources/web/preview.html, so the test embeds the web assets.
-foreach(web_asset preview.html marked.min.js highlight.min.js highlight-github.css)
+foreach(web_asset preview.html marked.min.js)
     set_source_files_properties(${CMAKE_SOURCE_DIR}/resources/web/${web_asset}
         PROPERTIES QT_RESOURCE_ALIAS "resources/web/${web_asset}")
 endforeach()
@@ -121,9 +121,7 @@ qt_add_resources(tst_settingsdialog "tst_settingsdialog_web"
     PREFIX "/"
     FILES
         ${CMAKE_SOURCE_DIR}/resources/web/preview.html
-        ${CMAKE_SOURCE_DIR}/resources/web/marked.min.js
-        ${CMAKE_SOURCE_DIR}/resources/web/highlight.min.js
-        ${CMAKE_SOURCE_DIR}/resources/web/highlight-github.css)
+        ${CMAKE_SOURCE_DIR}/resources/web/marked.min.js)
 
 # MainWindow lives in the application target; the test compiles it directly
 # like tst_settingsdialog and needs the UI sources it pulls in.

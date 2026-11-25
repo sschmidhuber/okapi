@@ -26,6 +26,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
+#include <QTimer>
 
 namespace okapi {
 
@@ -83,11 +84,21 @@ SettingsDialog::SettingsDialog(BackendRegistry *backendRegistry, McpRegistry *mc
     // list grow far beyond its maximum width until the handle was moved once.
     m_ui->splitter->setStretchFactor(0, 1);
 
-    connect(m_categories, &QListWidget::currentRowChanged, this,
-            [this](int row) { m_stack->setCurrentIndex(row); });
+    connect(m_categories, &QListWidget::currentRowChanged, this, [this](int row) {
+        m_stack->setCurrentIndex(row);
+        buildCurrentTab();
+    });
     connect(m_ui->buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-    m_categories->setCurrentRow(0);
+    {
+        // Do not build the initial page here: a heavy first page (the system
+        // prompt's web preview) would delay opening the dialog.
+        const QSignalBlocker blocker(m_categories);
+        m_categories->setCurrentRow(0);
+    }
+    m_stack->setCurrentIndex(0);
+    // Build the initially visible page only once the dialog is shown.
+    QTimer::singleShot(0, this, [this] { buildCurrentTab(); });
 }
 
 void SettingsDialog::selectPage(const QString &pageId) {
@@ -144,8 +155,20 @@ void SettingsDialog::addTab(const QString &title, const QString &tabId,
     m_tabIds.append(tabId);
     m_tabFactories.append(std::move(factory));
     m_tabBuilt.append(false);
-    // Placeholder page; replaced by the real page in ensureTabBuilt().
+    // Placeholder page; replaced by the real page in ensureTabBuilt(). The
+    // signal is blocked because adding the first tab emits currentChanged(0);
+    // pages are built on demand (category change, tab selection, initial
+    // deferred build) instead of eagerly at registration.
+    const QSignalBlocker blocker(tabs);
     tabs->addTab(new QWidget(tabs), title);
+}
+
+void SettingsDialog::buildCurrentTab() {
+    const int row = m_categories->currentRow();
+    if (row < 0 || row >= m_tabWidgets.size())
+        return;
+    auto *tabs = m_tabWidgets.at(row);
+    ensureTabBuilt(tabs, tabs->currentIndex());
 }
 
 void SettingsDialog::ensureTabBuilt(QTabWidget *tabs, int index) {

@@ -60,6 +60,10 @@ private:
     // Builds the page behind the given tab if it is still a placeholder.
     void ensureTabBuilt(QTabWidget *tabs, int index);
 
+    // Builds the currently selected tab of the current category (used when
+    // the category changes and deferred for the initial page after show()).
+    void buildCurrentTab();
+
     // The dialog shell (splitter, category list, stacked pages, button box)
     // is loaded from ui/settingsdialog.ui (AUTOUIC).
     std::unique_ptr<Ui::SettingsDialog> m_ui;
