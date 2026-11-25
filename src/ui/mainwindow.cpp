@@ -80,6 +80,18 @@ QString shortStreamErrorText(int httpStatus) {
     return QObject::tr("Error");
 }
 
+// Icon of the sidebar toggle button: the KDE Breeze "collapse-left" icon
+// while the sidebar is shown, "expand-left" while it is hidden; falls back
+// to the bundled symbolic icon on systems without the Breeze theme.
+QIcon sidebarToggleIcon(bool visible) {
+    const QString name = visible ? QStringLiteral("icon_sidebar-collapse-left")
+                                 : QStringLiteral("icon_sidebar-expand-left");
+    QIcon icon = QIcon::fromTheme(name);
+    if (icon.isNull())
+        icon = themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg"));
+    return icon;
+}
+
 // Rich-text version of a backend error message with clickable links, for the
 // error dialog (server messages often contain URLs, e.g. billing pages).
 QString linkifiedErrorText(const QString &error) {
@@ -358,8 +370,6 @@ void MainWindow::setupUi() {
     // Icons need the current theme (re-set on theme changes as well).
     m_newChatButton->setIcon(
         themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-    m_toggleSidebarButton->setIcon(
-        themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg")));
     m_settingsButton->setIcon(
         themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
     setupPromptTemplateButton();
@@ -402,8 +412,12 @@ void MainWindow::setSidebarVisible(bool visible) {
     m_sidebar->setVisible(visible);
     // Saved immediately, so the state at exit is the state at the next start.
     m_uiSettings.setSidebarVisible(visible);
-    if (m_toggleSidebarButton && m_toggleSidebarButton->isChecked() != visible)
-        m_toggleSidebarButton->setChecked(visible);
+    if (m_toggleSidebarButton) {
+        // Icon-only button: collapse-left while shown, expand-left while hidden.
+        m_toggleSidebarButton->setIcon(sidebarToggleIcon(visible));
+        if (m_toggleSidebarButton->isChecked() != visible)
+            m_toggleSidebarButton->setChecked(visible);
+    }
 }
 
 void MainWindow::setupPromptTemplateButton() {
@@ -511,8 +525,7 @@ void MainWindow::setupConnections() {
         // Re-theme the toolbar and composer icons (recolored on load).
         m_newChatButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-        m_toggleSidebarButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg")));
+        m_toggleSidebarButton->setIcon(sidebarToggleIcon(m_sidebar->isVisible()));
         m_promptTemplateButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
         m_settingsButton->setIcon(
@@ -525,8 +538,7 @@ void MainWindow::setupConnections() {
             m_chatView->setDarkMode(m_darkMode);
             m_newChatButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-            m_toggleSidebarButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg")));
+            m_toggleSidebarButton->setIcon(sidebarToggleIcon(m_sidebar->isVisible()));
             m_promptTemplateButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
             m_settingsButton->setIcon(

@@ -480,9 +480,9 @@ void TestMainWindow::f9TogglesSidebar() {
     QVERIFY(sidebar->isVisible());
 }
 
-// The toolbar button at position 1 (after "New") shows/hides the sidebar
-// like F9 does, keeps its checked state in sync, and the visibility is
-// persisted so a restarted window restores it.
+// The first toolbar button (position 1) shows/hides the sidebar like F9
+// does, keeps its checked state in sync, and the visibility is persisted
+// so a restarted window restores it. The button is icon-only (no label).
 void TestMainWindow::sidebarToggleButtonPersistsVisibilityAcrossRestart() {
     {
         MainWindow window;
@@ -496,10 +496,12 @@ void TestMainWindow::sidebarToggleButtonPersistsVisibilityAcrossRestart() {
         QVERIFY(toolBar);
         const QList<QAction *> actions = toolBar->actions();
         QCOMPARE(actions.size(), 4);
-        QAction *toggle = actions.at(1);
+        QAction *toggle = actions.at(0);
         QCOMPARE(toggle, window.toggleSidebarButtonForTest());
         QVERIFY(toggle->isCheckable());
         QVERIFY(toggle->isChecked());
+        QVERIFY(toggle->text().isEmpty()); // icon only, no label
+        QVERIFY(!toggle->toolTip().isEmpty());
         QVERIFY(toggle->toolTip().contains(QStringLiteral("F9")));
 
         toggle->trigger(); // hide the sidebar
@@ -514,7 +516,7 @@ void TestMainWindow::sidebarToggleButtonPersistsVisibilityAcrossRestart() {
         auto *sidebar = window.findChild<Sidebar *>();
         QVERIFY(sidebar);
         QVERIFY(!sidebar->isVisible());
-        QAction *toggle = window.findChild<QToolBar *>()->actions().at(1);
+        QAction *toggle = window.findChild<QToolBar *>()->actions().at(0);
         QVERIFY(!toggle->isChecked());
 
         toggle->trigger(); // show it again
@@ -993,10 +995,10 @@ void TestMainWindow::promptTemplateToolbarMenuListsRecentFirstAndInserts() {
     auto *menu = window.promptTemplateMenuForTest();
     QVERIFY(menu);
     QCOMPARE(button->menu(), menu);
-    // After the sidebar toggle (position 1), before "Settings" in the top bar.
+    // First the sidebar toggle, then "New", then this button before "Settings".
     const QList<QAction *> toolBarActions = toolBar->actions();
     QCOMPARE(toolBarActions.size(), 4);
-    QCOMPARE(toolBarActions.at(1), window.toggleSidebarButtonForTest());
+    QCOMPARE(toolBarActions.at(0), window.toggleSidebarButtonForTest());
     QCOMPARE(toolBarActions.at(2), button->defaultAction());
 
     window.rebuildPromptTemplateMenuForTest();
