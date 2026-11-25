@@ -21,6 +21,8 @@ private slots:
     void themeRoundtripsThroughKey();
     void themeFromStringFallsBackToAuto();
     void setThemeEmitsChangedAndPersists();
+    void sidebarVisibleDefaultsToShown();
+    void sidebarVisibleEmitsChangedAndPersists();
 };
 
 void TestUiSettings::defaultsToHiddenThroughput() {
@@ -157,6 +159,36 @@ void TestUiSettings::setThemeEmitsChangedAndPersists() {
         loaded.load(file);
     }
     QCOMPARE(loaded.theme(), UiSettings::Theme::Dark);
+}
+
+void TestUiSettings::sidebarVisibleDefaultsToShown() {
+    UiSettings settings;
+    QVERIFY(settings.sidebarVisible());
+}
+
+void TestUiSettings::sidebarVisibleEmitsChangedAndPersists() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("okapi.conf"));
+    UiSettings settings;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        settings.load(file);
+    }
+    QVERIFY(settings.sidebarVisible()); // default
+    QSignalSpy spy(&settings, &UiSettings::changed);
+    settings.setSidebarVisible(false);
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(!settings.sidebarVisible());
+    settings.setSidebarVisible(false); // no change -> no signal
+    QCOMPARE(spy.count(), 1);
+
+    UiSettings loaded;
+    {
+        QSettings file(path, QSettings::IniFormat);
+        loaded.load(file);
+    }
+    QVERIFY(!loaded.sidebarVisible());
 }
 
 #include "tst_uisettings.moc"

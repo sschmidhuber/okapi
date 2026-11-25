@@ -112,6 +112,7 @@ public:
     }
     void rebuildPromptTemplateMenuForTest() { rebuildPromptTemplateMenu(); }
     [[nodiscard]] ModelPickerButton *modelPickerForTest() const { return m_modelPicker; }
+    [[nodiscard]] QAction *toggleSidebarButtonForTest() const { return m_toggleSidebarButton; }
     // Feeds a detection result for one backend directly, without network.
     void simulateModelsDetectedForTest(const QString &backendId, const QStringList &models) {
         onModelsDetected(backendId, models);
@@ -167,6 +168,10 @@ protected:
 
 private slots:
     void onNewChat();
+    // Shows/hides the chat-history sidebar (toolbar button and the
+    // "toggleSidebar" shortcut); the visibility is persisted via
+    // setSidebarVisible() so it survives restarts.
+    void toggleSidebar();
     void onSessionSelected(const QUuid &id);
     // Editing a user message: loads it into the composer; Send truncates the
     // history from that message on and resends, Cancel aborts.
@@ -238,6 +243,9 @@ private slots:
 
 private:
     void setupUi();
+    // Applies and persists the sidebar visibility (ui/sidebarVisible in
+    // okapi.conf) and keeps the toolbar button's checked state in sync.
+    void setSidebarVisible(bool visible);
     // Turns the toolbar's promptTemplateButton action into a dropdown
     // button with the template menu (icon, popup mode, menu wiring).
     void setupPromptTemplateButton();
@@ -461,6 +469,7 @@ private:
     // Toolbar entries are QActions in the .ui (Designer drops widget children
     // of a QToolBar on save); the toolbar instantiates the buttons for them.
     QAction *m_newChatButton = nullptr;
+    QAction *m_toggleSidebarButton = nullptr;
     QAction *m_promptTemplateButton = nullptr;
     QAction *m_settingsButton = nullptr;
     // The toolbar instantiates a QToolButton for each action; the dropdown

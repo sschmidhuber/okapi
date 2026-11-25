@@ -269,6 +269,7 @@ Set up a backend via &quot;Settings… → Model backends&quot; to get started.<
     <bool>false</bool>
    </attribute>
    <addaction name="newChatButton"/>
+   <addaction name="toggleSidebarButton"/>
    <addaction name="promptTemplateButton"/>
    <addaction name="settingsButton"/>
   </widget>
@@ -300,6 +301,20 @@ Set up a backend via &quot;Settings… → Model backends&quot; to get started.<
    </property>
    <property name="toolTip">
     <string>Start a new chat</string>
+   </property>
+  </action>
+  <action name="toggleSidebarButton">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Sidebar</string>
+   </property>
+   <property name="toolTip">
+    <string>Show/hide chat history</string>
    </property>
   </action>
   <action name="promptTemplateButton">

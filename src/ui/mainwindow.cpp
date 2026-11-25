@@ -340,6 +340,7 @@ void MainWindow::setupUi() {
 
     m_toolBar = m_ui->mainToolBar;
     m_newChatButton = m_ui->newChatButton;
+    m_toggleSidebarButton = m_ui->toggleSidebarButton;
     m_promptTemplateButton = m_ui->promptTemplateButton;
     m_settingsButton = m_ui->settingsButton;
     m_sidebar = m_ui->sidebar;
@@ -357,12 +358,17 @@ void MainWindow::setupUi() {
     // Icons need the current theme (re-set on theme changes as well).
     m_newChatButton->setIcon(
         themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+    m_toggleSidebarButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg")));
     m_settingsButton->setIcon(
         themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
     setupPromptTemplateButton();
     const QKeySequence newChatSequence = m_shortcuts.sequence(QStringLiteral("newChat"));
     m_newChatButton->setToolTip(
         tr("Start a new chat (%1)").arg(newChatSequence.toString(QKeySequence::NativeText)));
+    const QKeySequence sidebarSequence = m_shortcuts.sequence(QStringLiteral("toggleSidebar"));
+    m_toggleSidebarButton->setToolTip(tr("Show/hide the chat history (%1)")
+                                          .arg(sidebarSequence.toString(QKeySequence::NativeText)));
     const QIcon speakerIcon(themedIcon(QStringLiteral(":/resources/icons/audio-symbolic.svg")));
     if (!speakerIcon.isNull())
         m_speakButton->setIcon(speakerIcon);
@@ -382,6 +388,22 @@ void MainWindow::setupUi() {
     m_mcpStatusLabel = m_ui->mcpStatusLabel;
     statusBar()->addPermanentWidget(m_mcpStatusLabel);
     setStatusBase(tr("Ready"));
+    // Restore the sidebar visibility persisted across restarts.
+    setSidebarVisible(m_uiSettings.sidebarVisible());
+}
+
+void MainWindow::toggleSidebar() {
+    setSidebarVisible(!m_sidebar->isVisible());
+}
+
+void MainWindow::setSidebarVisible(bool visible) {
+    if (!m_sidebar)
+        return;
+    m_sidebar->setVisible(visible);
+    // Saved immediately, so the state at exit is the state at the next start.
+    m_uiSettings.setSidebarVisible(visible);
+    if (m_toggleSidebarButton && m_toggleSidebarButton->isChecked() != visible)
+        m_toggleSidebarButton->setChecked(visible);
 }
 
 void MainWindow::setupPromptTemplateButton() {
@@ -461,6 +483,7 @@ void MainWindow::onPromptTemplateMenuTriggered(QAction *action) {
 
 void MainWindow::setupConnections() {
     connect(m_newChatButton, &QAction::triggered, this, &MainWindow::onNewChat);
+    connect(m_toggleSidebarButton, &QAction::triggered, this, &MainWindow::toggleSidebar);
     createWindowShortcuts();
     m_composer->setDictateSequence(m_shortcuts.sequence(QStringLiteral("dictate")));
     m_composer->setPromptTriggerSequence(m_shortcuts.sequence(QStringLiteral("promptTemplates")));
@@ -488,6 +511,8 @@ void MainWindow::setupConnections() {
         // Re-theme the toolbar and composer icons (recolored on load).
         m_newChatButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+        m_toggleSidebarButton->setIcon(
+            themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg")));
         m_promptTemplateButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
         m_settingsButton->setIcon(
@@ -500,6 +525,8 @@ void MainWindow::setupConnections() {
             m_chatView->setDarkMode(m_darkMode);
             m_newChatButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+            m_toggleSidebarButton->setIcon(
+                themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg")));
             m_promptTemplateButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
             m_settingsButton->setIcon(
@@ -1131,8 +1158,7 @@ void MainWindow::createWindowShortcuts() {
     auto *sidebarShortcut =
         new QShortcut(m_shortcuts.sequence(QStringLiteral("toggleSidebar")), this);
     sidebarShortcut->setContext(Qt::WindowShortcut);
-    connect(sidebarShortcut, &QShortcut::activated, this,
-            [this]() { m_sidebar->setVisible(!m_sidebar->isVisible()); });
+    connect(sidebarShortcut, &QShortcut::activated, this, &MainWindow::toggleSidebar);
     m_windowShortcuts.append(sidebarShortcut);
     auto *nextChatShortcut = new QShortcut(m_shortcuts.sequence(QStringLiteral("nextChat")), this);
     nextChatShortcut->setContext(Qt::WindowShortcut);
@@ -1178,6 +1204,9 @@ void MainWindow::reapplyShortcuts() {
     const QKeySequence newChatSequence = m_shortcuts.sequence(QStringLiteral("newChat"));
     m_newChatButton->setToolTip(
         tr("Start a new chat (%1)").arg(newChatSequence.toString(QKeySequence::NativeText)));
+    const QKeySequence sidebarSequence = m_shortcuts.sequence(QStringLiteral("toggleSidebar"));
+    m_toggleSidebarButton->setToolTip(tr("Show/hide the chat history (%1)")
+                                          .arg(sidebarSequence.toString(QKeySequence::NativeText)));
     if (m_composer) {
         m_composer->setDictateSequence(m_shortcuts.sequence(QStringLiteral("dictate")));
         m_composer->setPromptTriggerSequence(

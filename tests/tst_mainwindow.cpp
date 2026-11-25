@@ -151,6 +151,7 @@ private slots:
     void reboundShortcutFiresImmediately();
     void newChatFocusesInput();
     void f9TogglesSidebar();
+    void sidebarToggleButtonPersistsVisibilityAcrossRestart();
     void ctrlTabCyclesChats();
     void deleteSingleChatWithoutConfirmation();
     void deleteMultipleChatsWithoutConfirmation();
@@ -477,6 +478,56 @@ void TestMainWindow::f9TogglesSidebar() {
 
     QTest::keyClick(&window, Qt::Key_F9);
     QVERIFY(sidebar->isVisible());
+}
+
+// The toolbar button at position 1 (after "New") shows/hides the sidebar
+// like F9 does, keeps its checked state in sync, and the visibility is
+// persisted so a restarted window restores it.
+void TestMainWindow::sidebarToggleButtonPersistsVisibilityAcrossRestart() {
+    {
+        MainWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto *sidebar = window.findChild<Sidebar *>();
+        QVERIFY(sidebar);
+        QVERIFY(sidebar->isVisible());
+
+        auto *toolBar = window.findChild<QToolBar *>();
+        QVERIFY(toolBar);
+        const QList<QAction *> actions = toolBar->actions();
+        QCOMPARE(actions.size(), 4);
+        QAction *toggle = actions.at(1);
+        QCOMPARE(toggle, window.toggleSidebarButtonForTest());
+        QVERIFY(toggle->isCheckable());
+        QVERIFY(toggle->isChecked());
+        QVERIFY(toggle->toolTip().contains(QStringLiteral("F9")));
+
+        toggle->trigger(); // hide the sidebar
+        QVERIFY(!sidebar->isVisible());
+        QVERIFY(!toggle->isChecked());
+    }
+    // A new window ("restart") restores the persisted hidden state.
+    {
+        MainWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto *sidebar = window.findChild<Sidebar *>();
+        QVERIFY(sidebar);
+        QVERIFY(!sidebar->isVisible());
+        QAction *toggle = window.findChild<QToolBar *>()->actions().at(1);
+        QVERIFY(!toggle->isChecked());
+
+        toggle->trigger(); // show it again
+        QVERIFY(sidebar->isVisible());
+        QVERIFY(toggle->isChecked());
+    }
+    // Leave the persisted state "visible" for the other tests.
+    {
+        MainWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(window.findChild<Sidebar *>()->isVisible());
+    }
 }
 
 // Ctrl+Tab / Ctrl+Shift+Tab switch to the next / previous chat of the
@@ -942,10 +993,11 @@ void TestMainWindow::promptTemplateToolbarMenuListsRecentFirstAndInserts() {
     auto *menu = window.promptTemplateMenuForTest();
     QVERIFY(menu);
     QCOMPARE(button->menu(), menu);
-    // Between "New" and "Settings" in the top icon bar.
+    // After the sidebar toggle (position 1), before "Settings" in the top bar.
     const QList<QAction *> toolBarActions = toolBar->actions();
-    QCOMPARE(toolBarActions.size(), 3);
-    QCOMPARE(toolBarActions.at(1), button->defaultAction());
+    QCOMPARE(toolBarActions.size(), 4);
+    QCOMPARE(toolBarActions.at(1), window.toggleSidebarButtonForTest());
+    QCOMPARE(toolBarActions.at(2), button->defaultAction());
 
     window.rebuildPromptTemplateMenuForTest();
     const QList<QAction *> actions = menu->actions();

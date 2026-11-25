@@ -41,6 +41,11 @@ public:
     [[nodiscard]] static QString themeKey(Theme theme);
     [[nodiscard]] static Theme themeFromString(const QString &key);
 
+    // Whether the chat-history sidebar is shown; persisted so the state
+    // survives restarts (toggled via the toolbar button or the shortcut).
+    [[nodiscard]] bool sidebarVisible() const { return m_sidebarVisible; }
+    void setSidebarVisible(bool visible);
+
     void load(QSettings &settings);
     void save(QSettings &settings) const;
     void save() const;
@@ -52,6 +57,7 @@ private:
     bool m_showThroughput = false;
     int m_composerHeight = 96;
     Theme m_theme = Theme::Auto;
+    bool m_sidebarVisible = true;
     QString m_persistPath;
     QSettings::Format m_persistFormat = QSettings::IniFormat;
 };

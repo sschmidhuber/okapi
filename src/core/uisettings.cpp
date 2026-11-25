@@ -9,6 +9,7 @@ namespace {
 constexpr auto kShowThroughputKey = "ui/showThroughput";
 constexpr auto kComposerHeightKey = "ui/composerHeight";
 constexpr auto kThemeKey = "ui/theme";
+constexpr auto kSidebarVisibleKey = "ui/sidebarVisible";
 
 } // namespace
 
@@ -59,6 +60,14 @@ void UiSettings::setTheme(UiSettings::Theme theme) {
     emit changed();
 }
 
+void UiSettings::setSidebarVisible(bool visible) {
+    if (m_sidebarVisible == visible)
+        return;
+    m_sidebarVisible = visible;
+    save();
+    emit changed();
+}
+
 void UiSettings::load(QSettings &settings) {
     m_showThroughput = settings.value(QString::fromLatin1(kShowThroughputKey), false).toBool();
     m_composerHeight = std::clamp(
@@ -66,6 +75,7 @@ void UiSettings::load(QSettings &settings) {
         kMinComposerHeight, kMaxComposerHeight);
     m_theme = themeFromString(
         settings.value(QString::fromLatin1(kThemeKey), themeKey(m_theme)).toString());
+    m_sidebarVisible = settings.value(QString::fromLatin1(kSidebarVisibleKey), true).toBool();
     // Persist through a fresh QSettings created from the path/format: the
     // caller's object is frequently stack-local (MainWindow opens one per
     // load), so keeping a pointer to it would dangle on save().
@@ -78,6 +88,7 @@ void UiSettings::save(QSettings &settings) const {
     settings.setValue(QString::fromLatin1(kShowThroughputKey), m_showThroughput);
     settings.setValue(QString::fromLatin1(kComposerHeightKey), m_composerHeight);
     settings.setValue(QString::fromLatin1(kThemeKey), themeKey(m_theme));
+    settings.setValue(QString::fromLatin1(kSidebarVisibleKey), m_sidebarVisible);
 }
 
 void UiSettings::save() const {
