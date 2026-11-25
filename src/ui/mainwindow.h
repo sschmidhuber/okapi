@@ -244,6 +244,9 @@ private:
     // the first paint. Until then m_chatView is null and the chat-area
     // code paths skip the view.
     void ensureChatView();
+    // Pushes throughput/dark-mode state to the chat view; no-op until the
+    // view exists (ensureChatView() applies it on creation).
+    void syncChatViewAppearance();
     // Turns the toolbar's promptTemplateButton action into a dropdown
     // button with the template menu (icon, popup mode, menu wiring).
     void setupPromptTemplateButton();

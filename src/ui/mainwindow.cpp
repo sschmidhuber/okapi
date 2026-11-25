@@ -396,11 +396,17 @@ void MainWindow::ensureChatView() {
     m_chatView = new WebChatView(m_ui->chatViewHost);
     m_ui->chatMarginLayout->insertWidget(0, m_chatView);
     // Apply the state that was set before the view existed.
-    m_chatView->setShowThroughput(m_uiSettings.showThroughput());
-    m_chatView->setDarkMode(m_darkMode);
+    syncChatViewAppearance();
     m_chatView->setSession(m_currentSession);
     m_chatView->setVisible(!m_emptyLabel->isVisible());
     setupChatViewConnections();
+}
+
+void MainWindow::syncChatViewAppearance() {
+    if (!m_chatView)
+        return;
+    m_chatView->setShowThroughput(m_uiSettings.showThroughput());
+    m_chatView->setDarkMode(m_darkMode);
 }
 
 void MainWindow::setupPromptTemplateButton() {
@@ -496,18 +502,13 @@ void MainWindow::setupConnections() {
             closePromptMenu();
     });
     connect(&m_shortcuts, &ShortcutRegistry::changed, this, &MainWindow::reapplyShortcuts);
-    // The chat view is created lazily (ensureChatView()); until then the
-    // m_chatView calls below are skipped and the current state is applied
-    // when the view is created.
-    connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
-        if (m_chatView)
-            m_chatView->setShowThroughput(m_uiSettings.showThroughput());
-    });
+    // The chat view is created lazily (ensureChatView()); appearance updates
+    // go through syncChatViewAppearance(), which is a no-op until then.
+    connect(&m_uiSettings, &UiSettings::changed, this, [this]() { syncChatViewAppearance(); });
     // Theme: applied immediately; in Auto mode also follow live OS changes.
     connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
         m_darkMode = applyTheme(m_uiSettings.theme());
-        if (m_chatView)
-            m_chatView->setDarkMode(m_darkMode);
+        syncChatViewAppearance();
         // Re-theme the toolbar and composer icons (recolored on load).
         m_newChatButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
@@ -520,8 +521,7 @@ void MainWindow::setupConnections() {
     connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this](Qt::ColorScheme) {
         if (m_uiSettings.theme() == UiSettings::Theme::Auto) {
             m_darkMode = applyTheme(UiSettings::Theme::Auto);
-            if (m_chatView)
-                m_chatView->setDarkMode(m_darkMode);
+            syncChatViewAppearance();
             m_newChatButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
             m_promptTemplateButton->setIcon(
