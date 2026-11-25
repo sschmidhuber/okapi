@@ -13,7 +13,7 @@
    <item>
     <widget class="QSplitter" name="splitter">
      <property name="orientation">
-      <enum>Qt::Vertical</enum>
+      <enum>Qt::Horizontal</enum>
      </property>
      <widget class="QWidget" name="editorPane">
       <layout class="QVBoxLayout" name="editorPaneLayout">
@@ -39,11 +39,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QTextEdit" name="preview">
-         <property name="readOnly">
-          <bool>true</bool>
-         </property>
-        </widget>
+        <widget class="QWebEngineView" name="preview"/>
        </item>
       </layout>
      </widget>
@@ -82,6 +78,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QWebEngineView</class>
+   <extends>QWidget</extends>
+   <header>QtWebEngineWidgets/QWebEngineView</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

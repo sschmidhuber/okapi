@@ -15,6 +15,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QEventLoop>
 #include <QFile>
 #include <QKeySequence>
 #include <QLabel>
@@ -24,14 +25,16 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
-#include <QScrollBar>
+#include <QSignalSpy>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
-#include <QTextBlock>
-#include <QTextEdit>
+#include <QTimer>
+#include <QUrl>
+#include <QWebEnginePage>
+#include <QWebEngineView>
 #include <QtTest>
 
 #include <memory>
@@ -50,6 +53,30 @@ QStackedWidget *stackOf(const SettingsDialog &dialog) {
 QTabWidget *tabsOf(const SettingsDialog &dialog, int categoryRow) {
     auto *stack = stackOf(dialog);
     return stack ? qobject_cast<QTabWidget *>(stack->widget(categoryRow)) : nullptr;
+}
+
+// Evaluates expr in the web page and returns the result as a string.
+QString evalJs(QWebEnginePage *page, const QString &expr) {
+    QString result;
+    QEventLoop loop;
+    QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+    page->runJavaScript(expr, [&result, &loop](const QVariant &v) {
+        result = v.toString();
+        loop.quit();
+    });
+    loop.exec();
+    return result;
+}
+
+// Polls expr until its result contains needle (the preview re-renders
+// asynchronously after each keystroke).
+bool waitForJs(QWebEnginePage *page, const QString &expr, const QString &needle) {
+    for (int i = 0; i < 100; ++i) {
+        if (evalJs(page, expr).contains(needle))
+            return true;
+        QTest::qWait(100);
+    }
+    return false;
 }
 
 } // namespace
@@ -276,6 +303,10 @@ void TestSettingsDialog::sidebarKeepsMaxWidthWhenDialogGrows() {
 
 int main(int argc, char *argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    // WebEngine needs these flags in containers without a user namespace
+    // (e.g. the sandbox); harmless on a normal desktop runner.
+    if (qEnvironmentVariableIsEmpty("QTWEBENGINE_CHROMIUM_FLAGS"))
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu --disable-dev-shm-usage");
     QApplication app(argc, argv);
     TestSettingsDialog test;
     return QTest::qExec(&test, argc, argv);
@@ -406,47 +437,46 @@ void TestSettingsDialog::mcpTransportSwitchHidesOtherGroupIncludingLabels() {
     QVERIFY(!labelWithText(QStringLiteral("Command:"))->isVisibleTo(&page));
 }
 
-// The system prompt page has no preview button: editor and preview are split
-// vertically and the preview renders the substituted prompt as Markdown,
-// updating live on every edit.
+// The system prompt page has no preview button: editor and preview sit side
+// by side in a horizontal splitter, and the preview is a web view that
+// renders the substituted prompt as Markdown, updated live on every edit.
 void TestSettingsDialog::systemPromptPagePreviewsMarkdownLive() {
     SystemPrompt prompt;
     prompt.setText(QStringLiteral("# Title\n\nSome **bold** text with {{date}}"));
-    SystemPromptPage page(&prompt);
-    page.resize(640, 480);
+    UiSettings uiSettings;
+    SystemPromptPage page(&prompt, &uiSettings);
+    auto *preview = page.findChild<QWebEngineView *>(QStringLiteral("preview"));
+    QVERIFY(preview);
+    QSignalSpy loadSpy(preview, &QWebEngineView::loadFinished);
+    page.resize(800, 500);
     page.show();
 
     QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("previewButton")));
 
     auto *splitter = page.findChild<QSplitter *>(QStringLiteral("splitter"));
     QVERIFY(splitter);
-    QCOMPARE(splitter->orientation(), Qt::Vertical);
+    QCOMPARE(splitter->orientation(), Qt::Horizontal);
     auto *editor = page.findChild<QPlainTextEdit *>(QStringLiteral("editor"));
-    auto *preview = page.findChild<QTextEdit *>(QStringLiteral("preview"));
-    QVERIFY(editor && preview);
-    QVERIFY(preview->isReadOnly());
+    QVERIFY(editor);
     QCOMPARE(splitter->widget(0), editor->parentWidget());
     QCOMPARE(splitter->widget(1), preview->parentWidget());
+    QCOMPARE(preview->url(), QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
 
-    // Initial content: fields substituted and rendered as Markdown, so the
-    // first block is a bold, enlarged heading and no {{...}} remains.
-    QVERIFY(!preview->document()->toPlainText().contains(QStringLiteral("{{")));
-    bool headingFormatted = false;
-    for (QTextBlock block = preview->document()->firstBlock(); block.isValid();
-         block = block.next()) {
-        for (auto it = block.begin(); !it.atEnd(); ++it) {
-            const QTextCharFormat f = it.fragment().charFormat();
-            if (f.fontWeight() == QFont::Bold && f.fontPointSize() > 10.0)
-                headingFormatted = true;
-        }
-    }
-    QVERIFY(headingFormatted);
+    // The preview page loads and renders the initial prompt as Markdown:
+    // heading and bold markup, with the {{date}} field substituted.
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QVERIFY(loadSpy.first().at(0).toBool());
+    const QString contentExpr = QStringLiteral("document.getElementById('content').innerHTML");
+    QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<h1")));
+    const QString initial = evalJs(preview->page(), contentExpr);
+    QVERIFY(initial.contains(QStringLiteral("<strong>bold</strong>")));
+    QVERIFY(!initial.contains(QStringLiteral("{{")));
 
-    // Live update: editing re-renders the preview without pressing a button,
-    // and the document wraps at the pane width (no horizontal scrollbar).
-    editor->setPlainText(QStringLiteral("Plain line\n\n- bullet"));
-    QVERIFY(preview->document()->toPlainText().contains(QStringLiteral("bullet")));
-    QVERIFY(preview->horizontalScrollBar()->maximum() == 0);
+    // Live update: editing re-renders the preview without pressing a button.
+    editor->setPlainText(QStringLiteral("Plain line\n\n- bullet **x**"));
+    QVERIFY(waitForJs(preview->page(), contentExpr, QStringLiteral("<li>")));
+    const QString updated = evalJs(preview->page(), contentExpr);
+    QVERIFY(updated.contains(QStringLiteral("<strong>x</strong>")));
 }
 
 #include "tst_settingsdialog.moc"

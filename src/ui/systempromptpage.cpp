@@ -1,23 +1,40 @@
 #include "ui/systempromptpage.h"
 #include "ui_systempromptpage.h"
 
-#include "core/markdown.h"
 #include "core/systemprompt.h"
+#include "core/uisettings.h"
+#include "ui/theme.h"
 
 #include <QDir>
-#include <QEvent>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QTextEdit>
+#include <QUrl>
+#include <QWebEngineSettings>
+#include <QWebEngineView>
 
 namespace okapi {
 
+namespace {
+
+// The prompt text is passed to the preview page as a JS string literal.
+QString jsString(const QString &s) {
+    QJsonArray arr;
+    arr.append(s);
+    QString json = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    return json.mid(1, json.size() - 2); // strip the array brackets -> bare JSON string
+}
+
+} // namespace
+
 SystemPromptPage::~SystemPromptPage() = default;
 
-SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, QWidget *parent)
-    : QWidget(parent), m_systemPrompt(systemPrompt),
+SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, UiSettings *uiSettings,
+                                   QWidget *parent)
+    : QWidget(parent), m_systemPrompt(systemPrompt), m_uiSettings(uiSettings),
       m_ui(std::make_unique<Ui::SystemPromptPage>()) {
     m_ui->setupUi(this);
     m_editor = m_ui->editor;
@@ -28,22 +45,27 @@ SystemPromptPage::SystemPromptPage(SystemPrompt *systemPrompt, QWidget *parent)
     m_ui->splitter->setStretchFactor(0, 1);
     m_ui->splitter->setStretchFactor(1, 1);
 
+    m_preview->settings()->setAttribute(QWebEngineSettings::ShowScrollBars, false);
+    connect(m_preview, &QWebEngineView::loadFinished, this, [this](bool ok) {
+        if (!ok)
+            return;
+        m_previewReady = true;
+        callJs(QStringLiteral("setTheme(%1)")
+                   .arg(m_darkMode ? QStringLiteral("true") : QStringLiteral("false")));
+        updatePreview();
+    });
+
     m_editor->setPlainText(m_systemPrompt->text());
 
     connect(m_saveButton, &QPushButton::clicked, this, &SystemPromptPage::onSave);
     connect(m_resetButton, &QPushButton::clicked, this, &SystemPromptPage::onResetDefault);
     connect(m_editor, &QPlainTextEdit::textChanged, this, &SystemPromptPage::updatePreview);
-    // The preview document is laid out for a fixed text width, so re-render
-    // when the preview pane changes width (dialog resize or splitter moved).
-    m_preview->viewport()->installEventFilter(this);
+    if (m_uiSettings) {
+        connect(m_uiSettings, &UiSettings::changed, this, &SystemPromptPage::applyDarkMode);
+        applyDarkMode();
+    }
 
-    updatePreview();
-}
-
-bool SystemPromptPage::eventFilter(QObject *watched, QEvent *event) {
-    if (watched == m_preview->viewport() && event->type() == QEvent::Resize)
-        updatePreview();
-    return QWidget::eventFilter(watched, event);
+    m_preview->setUrl(QUrl(QStringLiteral("qrc:/resources/web/preview.html")));
 }
 
 void SystemPromptPage::onSave() {
@@ -60,10 +82,21 @@ void SystemPromptPage::onResetDefault() {
     m_editor->setPlainText(SystemPrompt::defaultTemplate());
 }
 
+void SystemPromptPage::applyDarkMode() {
+    m_darkMode = m_uiSettings->theme() == UiSettings::Theme::Dark ||
+                 (m_uiSettings->theme() == UiSettings::Theme::Auto && systemPrefersDark());
+    callJs(QStringLiteral("setTheme(%1)")
+               .arg(m_darkMode ? QStringLiteral("true") : QStringLiteral("false")));
+}
+
 void SystemPromptPage::updatePreview() {
-    const QString text = SystemPrompt::substitute(m_editor->toPlainText());
-    const int width = qMax(60, m_preview->viewport()->width());
-    m_preview->setDocument(MarkdownRenderer::render(text, width, m_preview->font()).release());
+    callJs(QStringLiteral("renderPreview(%1)")
+               .arg(jsString(SystemPrompt::substitute(m_editor->toPlainText()))));
+}
+
+void SystemPromptPage::callJs(const QString &expr) {
+    if (m_previewReady)
+        m_preview->page()->runJavaScript(expr);
 }
 
 } // namespace okapi

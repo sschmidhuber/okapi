@@ -45,7 +45,9 @@ SettingsDialog::SettingsDialog(BackendRegistry *backendRegistry, McpRegistry *mc
     addCategory(tr("General"), QStringLiteral("general"),
                 QStringLiteral(":/resources/icons/general.svg"));
     addTab(tr("System Prompt"), QStringLiteral("systemprompt"),
-           [systemPrompt, stack = m_stack] { return new SystemPromptPage(systemPrompt, stack); });
+           [systemPrompt, uiSettings, stack = m_stack] {
+               return new SystemPromptPage(systemPrompt, uiSettings, stack);
+           });
     addTab(tr("Prompt Templates"), QStringLiteral("prompttemplates"),
            [promptTemplates, stack = m_stack] {
                return new PromptTemplatesPage(promptTemplates, stack);
