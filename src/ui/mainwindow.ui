@@ -252,8 +252,8 @@ Set up a backend via &quot;Settings… → Model backends&quot; to get started.<
    </property>
    <property name="iconSize">
     <size>
-     <width>16</width>
-     <height>16</height>
+     <width>24</width>
+     <height>24</height>
     </size>
    </property>
    <property name="toolButtonStyle">
