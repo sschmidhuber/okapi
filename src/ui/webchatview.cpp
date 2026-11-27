@@ -1,4 +1,5 @@
 #include "core/chatsession.h"
+#include "core/startupprofile.h"
 
 #include "ui/webchatview.h"
 
@@ -140,6 +141,7 @@ void logChatElements(const Message &m) {
 } // namespace
 
 WebChatView::WebChatView(QWidget *parent) : QWebEngineView(parent) {
+    startupProfile::mark(QStringLiteral("WebChatView created"));
     m_bridge = new WebChatBridge(this);
     m_channel = new QWebChannel(this);
     m_channel->registerObject(QStringLiteral("qtBridge"), m_bridge);
@@ -157,6 +159,7 @@ WebChatView::WebChatView(QWidget *parent) : QWebEngineView(parent) {
     settings()->setAttribute(QWebEngineSettings::ShowScrollBars, false);
 
     connect(this, &QWebEngineView::loadFinished, this, [this](bool ok) {
+        startupProfile::mark(QStringLiteral("chat page loadFinished"));
         if (!ok)
             return;
         m_ready = true;
@@ -176,6 +179,7 @@ WebChatView::WebChatView(QWidget *parent) : QWebEngineView(parent) {
     // composer's attachment strip; a highlight marks the drop target.
     setAcceptDrops(true);
 
+    startupProfile::mark(QStringLiteral("chat page load started"));
     setUrl(QUrl(QStringLiteral("qrc:/resources/web/chat.html")));
 }
 

@@ -5,6 +5,7 @@
 #include "core/attachmentopener.h"
 #include "core/audiorecorder.h"
 #include "core/chatsession.h"
+#include "core/startupprofile.h"
 #include "core/tooldebug.h"
 #include "core/ttsplayer.h"
 #include "storage/chatdatabase.h"
@@ -271,12 +272,14 @@ struct StreamContext {
 };
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_mcpRegistry) {
+    startupProfile::mark(QStringLiteral("ctor begin"));
     setWindowTitle(tr("Okapi"));
     resize(1100, 720);
 
     if (!openDatabase())
         setStatusBase(tr("Warning: chat storage unavailable, chats will not be "
                          "persisted."));
+    startupProfile::mark(QStringLiteral("database opened"));
     loadBackendsFromDatabase();
     loadMcpServersFromDatabase();
     loadSttSettingsFromDatabase();
@@ -288,8 +291,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     // in constructors (themedIcon) already use the correct palette.
     m_darkMode = applyTheme(m_uiSettings.theme());
     loadPromptTemplates();
+    startupProfile::mark(QStringLiteral("config loaded"));
 
     setupUi();
+    startupProfile::mark(QStringLiteral("setupUi done"));
     setupConnections();
 
     // Voice input setup needs the composer, which setupUi() creates.
@@ -303,6 +308,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     onMcpToolsChanged();
 
     onBackendChanged();
+    startupProfile::mark(QStringLiteral("backend changed"));
     refreshSidebar();
 
     // Always start on a fresh chat: reopening the last chat would read its
@@ -310,6 +316,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     // chats are prefetched in the background, older ones load on demand when
     // selected.
     createSession();
+    startupProfile::mark(QStringLiteral("session created"));
     // Drains background prefetch results on the UI thread; the workers only
     // append to the shared queue, so they never touch this window.
     m_prefetchDrainTimer = new QTimer(this);
@@ -326,9 +333,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
         static_cast<void>(AudioRecorder::availableInputDevices());
         static_cast<void>(TtsPlayer::availableOutputDevices());
     });
+    startupProfile::mark(QStringLiteral("ctor end"));
 }
 
 void MainWindow::showEvent(QShowEvent *event) {
+    startupProfile::mark(QStringLiteral("showEvent"));
     QMainWindow::showEvent(event);
     // The chat composer is where a conversation starts: focus it on every
     // show of the main window (first launch and re-show alike) so the user
