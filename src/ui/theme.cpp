@@ -60,9 +60,17 @@ QIcon themedIcon(const QString &resourcePath) {
     QSvgRenderer renderer(svg);
     if (!renderer.isValid())
         return QIcon{resourcePath};
-    QPixmap pix(renderer.defaultSize());
+    // Render at a multiple of the SVG's default size and tag the pixmap
+    // with that device pixel ratio: the QIcon then holds a high-resolution
+    // raster, so scaling it down (toolbar iconSize, HiDPI) stays crisp
+    // instead of upscaling a low-res pixmap (blurry).
+    constexpr qreal kRenderScale = 4.0;
+    const QSize base = renderer.defaultSize();
+    QPixmap pix(static_cast<int>(base.width() * kRenderScale),
+                static_cast<int>(base.height() * kRenderScale));
+    pix.setDevicePixelRatio(kRenderScale);
     pix.fill(Qt::transparent);
-    QPainter painter(&pix);
+    QPainter painter(&pix); // logical viewport is base-sized; physical 4x
     renderer.render(&painter);
     return QIcon{pix};
 }
