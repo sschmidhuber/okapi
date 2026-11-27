@@ -252,8 +252,8 @@ Set up a backend via &quot;Settings… → Model backends&quot; to get started.<
    </property>
    <property name="iconSize">
     <size>
-     <width>16</width>
-     <height>16</height>
+     <width>22</width>
+     <height>22</height>
     </size>
    </property>
    <property name="toolButtonStyle">
@@ -268,6 +268,7 @@ Set up a backend via &quot;Settings… → Model backends&quot; to get started.<
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
+   <addaction name="toggleSidebarButton"/>
    <addaction name="newChatButton"/>
    <addaction name="promptTemplateButton"/>
    <addaction name="settingsButton"/>
@@ -300,6 +301,17 @@ Set up a backend via &quot;Settings… → Model backends&quot; to get started.<
    </property>
    <property name="toolTip">
     <string>Start a new chat</string>
+   </property>
+  </action>
+  <action name="toggleSidebarButton">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="toolTip">
+    <string>Show/hide chat history</string>
    </property>
   </action>
   <action name="promptTemplateButton">

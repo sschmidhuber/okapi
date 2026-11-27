@@ -234,6 +234,7 @@ qt_add_resources(okapi "okapi_resources"
         ../resources/icons/general.svg
         ../resources/icons/audio-symbolic.svg
         ../resources/icons/keyboard.svg
+        ../resources/icons/sidebar-expand-left-symbolic.svg
         ../resources/web/chat.html
         ../resources/web/preview.html
         ../resources/web/marked.min.js
