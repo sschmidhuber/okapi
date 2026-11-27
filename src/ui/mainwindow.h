@@ -243,6 +243,10 @@ private slots:
 
 private:
     void setupUi();
+    // Creates the chat web view on first show (not in setupUi()): constructing
+    // a QWebEngineView initializes Qt WebEngine and loads the chat page, which
+    // would otherwise delay the first paint; created after show instead.
+    void ensureChatView();
     // Applies and persists the sidebar visibility (ui/sidebarVisible in
     // okapi.conf) and keeps the toolbar button's checked state in sync.
     void setSidebarVisible(bool visible);
