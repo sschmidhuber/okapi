@@ -260,6 +260,12 @@ private:
     // Re-creates the window shortcuts and the composer's dictate shortcut
     // from the current registry state and refreshes the tooltips.
     void reapplyShortcuts();
+    // UiSettings::changed handler: throughput flag and theme for the lazily
+    // created chat view, then the icon re-theming.
+    void onUiSettingsChanged();
+    // Pushes the current dark mode to the chat view (if it exists yet) and
+    // re-themes the toolbar/composer icons.
+    void reapplyThemeAndIcons();
     // Chat-view signals: older-messages paging, link open/hover, file open.
     void setupChatViewConnections();
     // Wires the composer splitter (drag to resize, persist) and the

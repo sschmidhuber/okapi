@@ -539,38 +539,12 @@ void MainWindow::setupConnections() {
             closePromptMenu();
     });
     connect(&m_shortcuts, &ShortcutRegistry::changed, this, &MainWindow::reapplyShortcuts);
-    connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
-        if (m_chatView)
-            m_chatView->setShowThroughput(m_uiSettings.showThroughput());
-    });
-    // Theme: applied immediately; in Auto mode also follow live OS changes.
-    connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
-        m_darkMode = applyTheme(m_uiSettings.theme());
-        if (m_chatView)
-            m_chatView->setDarkMode(m_darkMode);
-        // Re-theme the toolbar and composer icons (recolored on load).
-        m_newChatButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-        m_toggleSidebarButton->setIcon(sidebarToggleIcon());
-        m_promptTemplateButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
-        m_settingsButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
-        m_composer->refreshTheme();
-    });
+    connect(&m_uiSettings, &UiSettings::changed, this, &MainWindow::onUiSettingsChanged);
+    // In Auto mode also follow live OS color-scheme changes.
     connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this](Qt::ColorScheme) {
         if (m_uiSettings.theme() == UiSettings::Theme::Auto) {
             m_darkMode = applyTheme(UiSettings::Theme::Auto);
-            if (m_chatView)
-                m_chatView->setDarkMode(m_darkMode);
-            m_newChatButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-            m_toggleSidebarButton->setIcon(sidebarToggleIcon());
-            m_promptTemplateButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
-            m_settingsButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
-            m_composer->refreshTheme();
+            reapplyThemeAndIcons();
         }
     });
     connect(m_settingsButton, &QAction::triggered, this, [this] { openSettings(QString()); });
@@ -700,6 +674,27 @@ void MainWindow::setupConnections() {
             [this](const QString &toolName, const QString &error) {
                 showTransientStatus(tr("MCP tool \"%1\" failed: %2").arg(toolName, error), 10000);
             });
+}
+
+void MainWindow::onUiSettingsChanged() {
+    if (m_chatView)
+        m_chatView->setShowThroughput(m_uiSettings.showThroughput());
+    m_darkMode = applyTheme(m_uiSettings.theme());
+    reapplyThemeAndIcons();
+}
+
+void MainWindow::reapplyThemeAndIcons() {
+    if (m_chatView)
+        m_chatView->setDarkMode(m_darkMode);
+    // Re-theme the toolbar and composer icons (recolored on load).
+    m_newChatButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+    m_toggleSidebarButton->setIcon(sidebarToggleIcon());
+    m_promptTemplateButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
+    m_settingsButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
+    m_composer->refreshTheme();
 }
 
 MainWindow::~MainWindow() {
