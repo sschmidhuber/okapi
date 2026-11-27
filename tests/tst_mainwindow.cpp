@@ -501,6 +501,8 @@ void TestMainWindow::sidebarToggleButtonPersistsVisibilityAcrossRestart() {
         QVERIFY(toggle->isCheckable());
         QVERIFY(toggle->isChecked());
         QVERIFY(toggle->text().isEmpty()); // icon only, no label
+        // (The icon itself is a qrc resource that only the app target
+        // embeds, so it is not available in the test binary.)
         QVERIFY(!toggle->toolTip().isEmpty());
         QVERIFY(toggle->toolTip().contains(QStringLiteral("F9")));
 

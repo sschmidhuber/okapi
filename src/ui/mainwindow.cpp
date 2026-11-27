@@ -80,16 +80,11 @@ QString shortStreamErrorText(int httpStatus) {
     return QObject::tr("Error");
 }
 
-// Icon of the sidebar toggle button: the KDE Breeze "collapse-left" icon
-// while the sidebar is shown, "expand-left" while it is hidden; falls back
-// to the bundled symbolic icon on systems without the Breeze theme.
-QIcon sidebarToggleIcon(bool visible) {
-    const QString name = visible ? QStringLiteral("icon_sidebar-collapse-left")
-                                 : QStringLiteral("icon_sidebar-expand-left");
-    QIcon icon = QIcon::fromTheme(name);
-    if (icon.isNull())
-        icon = themedIcon(QStringLiteral(":/resources/icons/view-sidebar-symbolic.svg"));
-    return icon;
+// Icon of the sidebar toggle button: the bundled Breeze symbolic icon
+// (sidebar-expand-left), recolored to the palette text color like the
+// other toolbar icons.
+QIcon sidebarToggleIcon() {
+    return themedIcon(QStringLiteral(":/resources/icons/sidebar-expand-left-symbolic.svg"));
 }
 
 // Rich-text version of a backend error message with clickable links, for the
@@ -413,8 +408,8 @@ void MainWindow::setSidebarVisible(bool visible) {
     // Saved immediately, so the state at exit is the state at the next start.
     m_uiSettings.setSidebarVisible(visible);
     if (m_toggleSidebarButton) {
-        // Icon-only button: collapse-left while shown, expand-left while hidden.
-        m_toggleSidebarButton->setIcon(sidebarToggleIcon(visible));
+        // Icon-only button (no label); the icon is the same in both states.
+        m_toggleSidebarButton->setIcon(sidebarToggleIcon());
         if (m_toggleSidebarButton->isChecked() != visible)
             m_toggleSidebarButton->setChecked(visible);
     }
@@ -525,7 +520,7 @@ void MainWindow::setupConnections() {
         // Re-theme the toolbar and composer icons (recolored on load).
         m_newChatButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-        m_toggleSidebarButton->setIcon(sidebarToggleIcon(m_sidebar->isVisible()));
+        m_toggleSidebarButton->setIcon(sidebarToggleIcon());
         m_promptTemplateButton->setIcon(
             themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
         m_settingsButton->setIcon(
@@ -538,7 +533,7 @@ void MainWindow::setupConnections() {
             m_chatView->setDarkMode(m_darkMode);
             m_newChatButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-            m_toggleSidebarButton->setIcon(sidebarToggleIcon(m_sidebar->isVisible()));
+            m_toggleSidebarButton->setIcon(sidebarToggleIcon());
             m_promptTemplateButton->setIcon(
                 themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
             m_settingsButton->setIcon(
