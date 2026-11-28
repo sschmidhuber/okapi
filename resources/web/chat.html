@@ -359,9 +359,43 @@
       }
     </script>
     <script src="marked.min.js"></script>
-    <script src="katex.min.js"></script>
-    <script src="highlight.min.js"></script>
     <script>
+      // katex.min.js and highlight.min.js (~1.1 MB combined) are loaded
+      // lazily once the page has loaded: as dynamically inserted async
+      // scripts they do not block the initial parse or the load event.
+      // Messages rendered before they arrive fall back to plain math text /
+      // unhighlighted code and are re-rendered when the libraries are ready.
+      function loadScriptLazy(src) {
+        return new Promise(function (resolve, reject) {
+          const s = document.createElement('script');
+          s.src = src;
+          s.async = true;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
+      function startLazyLibs() {
+        Promise.all([loadScriptLazy('katex.min.js'), loadScriptLazy('highlight.min.js')])
+          .catch(function () {
+            /* rendering falls back without them */
+          })
+          .then(function () {
+            const log = document.getElementById('log');
+            if (!log) return;
+            for (const el of log.querySelectorAll(':scope > .msg')) {
+              const raw = el.dataset.raw;
+              const body = el.querySelector('.body');
+              if (!raw || !body || body.classList.contains('cursor')) continue;
+              body.innerHTML = renderMarkdown(
+                el.classList.contains('user') ? escapeHtml(raw) : raw,
+              );
+            }
+          });
+      }
+      if (document.readyState === 'complete') startLazyLibs();
+      else window.addEventListener('load', startLazyLibs);
+
       marked.setOptions({
         breaks: true,
         gfm: true,
@@ -389,6 +423,7 @@
       // duration of the render because the metrics warnings are not gated by
       // strict. Rendering itself still falls back gracefully (throwOnError).
       function renderMath(tex, displayMode) {
+        if (typeof katex === 'undefined') return escapeHtml(tex); // lazy-loaded, see above
         const origWarn = console.warn;
         console.warn = function () {};
         try {

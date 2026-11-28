@@ -97,6 +97,15 @@ QString linkifiedErrorText(const QString &error) {
     return escaped;
 }
 
+// The shared okapi.conf: constructing a QSettings re-reads and re-parses the
+// file, so the startup config loaders share one instance instead of each
+// opening their own.
+QSettings openConfigSettings() {
+    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(configDir);
+    return QSettings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+}
+
 } // namespace
 
 ModelPickerButton::ModelPickerButton(QWidget *parent) : QToolButton(parent) {
@@ -282,15 +291,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     startupProfile::mark(QStringLiteral("database opened"));
     loadBackendsFromDatabase();
     loadMcpServersFromDatabase();
-    loadSttSettingsFromDatabase();
-    loadSystemPrompt();
-    loadLastModels();
-    loadShortcuts();
-    loadUiSettings();
+    QSettings settings = openConfigSettings();
+    loadSttSettingsFromDatabase(settings);
+    loadSystemPrompt(settings);
+    loadLastModels(settings);
+    loadShortcuts(settings);
+    loadUiSettings(settings);
     // Apply the theme before setupUi() creates any widgets, so icons created
     // in constructors (themedIcon) already use the correct palette.
     m_darkMode = applyTheme(m_uiSettings.theme());
-    loadPromptTemplates();
+    loadPromptTemplates(settings);
     startupProfile::mark(QStringLiteral("config loaded"));
 
     setupUi();
@@ -301,15 +311,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     configureVoiceInput();
 
     // TTS setup needs m_speakButton, which setupUi() creates.
-    loadTtsSettingsFromDatabase();
+    loadTtsSettingsFromDatabase(settings);
     configureTts();
-
-    m_mcpManager.reload();
-    onMcpToolsChanged();
 
     onBackendChanged();
     startupProfile::mark(QStringLiteral("backend changed"));
-    refreshSidebar();
 
     // Always start on a fresh chat: reopening the last chat would read its
     // full content (images, thumbnails) before the window is shown. Recent
@@ -324,14 +330,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     connect(m_prefetchDrainTimer, &QTimer::timeout, this, [this]() { drainPrefetchResults(); });
     m_prefetchDrainTimer->start();
     QTimer::singleShot(kPrefetchDelayMs, this, [this]() { prefetchRecentSessions(); });
-    // Warm the audio backend once after startup: the first QMediaDevices
-    // query initializes PulseAudio/PipeWire and can block noticeably, which
-    // otherwise surfaces as a delay when the settings dialog's STT/TTS pages
-    // enumerate audio devices for the first time.
+    // Work that is not needed for the first paint is deferred until after the
+    // window is shown: connecting to MCP servers (may spawn processes) and
+    // detecting models (network requests to every enabled backend) would
+    // otherwise compete with the first frame.
+    QTimer::singleShot(0, this, [this]() {
+        m_startupPending = false;
+        m_mcpManager.reload();
+        onMcpToolsChanged();
+        detectModels();
+        startupProfile::mark(QStringLiteral("deferred startup work done"));
+    });
+    // Warm the audio backend once after startup, off the UI thread: the first
+    // QMediaDevices query initializes PulseAudio/PipeWire and can block
+    // noticeably on the GUI thread. Results are intentionally unused; the
+    // calls only warm the backend for the settings dialog's STT/TTS pages.
     QTimer::singleShot(0, this, [] {
-        // Results are intentionally unused; the calls only warm the backend.
-        static_cast<void>(AudioRecorder::availableInputDevices());
-        static_cast<void>(TtsPlayer::availableOutputDevices());
+        QThreadPool::globalInstance()->start([] {
+            static_cast<void>(AudioRecorder::availableInputDevices());
+            static_cast<void>(TtsPlayer::availableOutputDevices());
+        });
     });
     startupProfile::mark(QStringLiteral("ctor end"));
 }
@@ -357,16 +375,30 @@ void MainWindow::ensureChatView() {
 void MainWindow::showEvent(QShowEvent *event) {
     startupProfile::mark(QStringLiteral("showEvent"));
     QMainWindow::showEvent(event);
-    // Defer the web view past the first paint: singleShot(0) runs after show()
-    // returns and the window has been exposed.
-    if (!m_chatView)
-        QTimer::singleShot(0, this, [this]() { ensureChatView(); });
+    // Fallback in case no paint event is delivered promptly (some platforms
+    // paint lazily): the chat view must exist shortly after show regardless.
+    if (!m_chatViewScheduled) {
+        m_chatViewScheduled = true;
+        QTimer::singleShot(250, this, [this]() { ensureChatView(); });
+    }
     // The chat composer is where a conversation starts: focus it on every
     // show of the main window (first launch and re-show alike) so the user
     // can start typing immediately.
     if (m_composer)
         m_composer->focusInput();
     applyComposerHeight();
+}
+
+void MainWindow::paintEvent(QPaintEvent *event) {
+    QMainWindow::paintEvent(event);
+    // Create the chat web view only after the first frame has been painted:
+    // the QWebEngineView constructor spawns the Chromium processes, which
+    // would otherwise delay the first presented frame. The singleShot(0)
+    // fires after the current paint pass (and its backing-store flush).
+    if (!m_chatViewScheduled) {
+        m_chatViewScheduled = true;
+        QTimer::singleShot(0, this, [this]() { ensureChatView(); });
+    }
 }
 
 void MainWindow::setupUi() {
@@ -1263,38 +1295,23 @@ void MainWindow::loadMcpServersFromDatabase() {
         m_mcpRegistry.load(m_database);
 }
 
-void MainWindow::loadSystemPrompt() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadSystemPrompt(QSettings &settings) {
     m_systemPrompt.load(settings);
 }
 
-void MainWindow::loadSttSettingsFromDatabase() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadSttSettingsFromDatabase(QSettings &settings) {
     m_sttRegistry.loadSettings(settings);
 }
 
-void MainWindow::loadTtsSettingsFromDatabase() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadTtsSettingsFromDatabase(QSettings &settings) {
     m_ttsRegistry.loadSettings(settings);
 }
 
-void MainWindow::loadShortcuts() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadShortcuts(QSettings &settings) {
     m_shortcuts.load(settings);
 }
 
-void MainWindow::loadPromptTemplates() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadPromptTemplates(QSettings &settings) {
     m_promptTemplates.load(settings);
 }
 
@@ -1421,17 +1438,11 @@ void MainWindow::closePromptMenu() {
         m_promptMenu->hide();
 }
 
-void MainWindow::loadUiSettings() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadUiSettings(QSettings &settings) {
     m_uiSettings.load(settings);
 }
 
-void MainWindow::loadLastModels() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadLastModels(QSettings &settings) {
     const auto keys = settings.allKeys();
     for (const QString &key : keys) {
         constexpr auto prefix = "models/last/";
@@ -1749,18 +1760,14 @@ void MainWindow::saveLastModelForBackend(const QString &backendId, const QString
     if (m_lastModels.value(backendId) == model.trimmed())
         return;
     m_lastModels.insert(backendId, model.trimmed());
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+    QSettings settings = openConfigSettings();
     settings.setValue(QStringLiteral("models/last/%1").arg(backendId), model.trimmed());
 }
 
 void MainWindow::forgetLastModelForBackend(const QString &backendId) {
     if (!m_lastModels.remove(backendId))
         return;
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+    QSettings settings = openConfigSettings();
     settings.remove(QStringLiteral("models/last/%1").arg(backendId));
 }
 
@@ -1867,6 +1874,45 @@ bool MainWindow::dropStaleDetectionIfReconfigured(const BackendConfig &config) {
     return true;
 }
 
+// Starts the listModels() request for one backend, unless one is already in
+// flight or the models are known. During startup the network request is
+// deferred until after the window is shown (see the constructor).
+void MainWindow::startModelDetectionFor(const BackendConfig &config) {
+    if (m_startupPending)
+        return;
+    const QString backendId = config.id.toString();
+    if (!m_detectedModels.value(backendId).isEmpty())
+        return; // already detected successfully for this backend
+    if (m_pendingDetection.contains(backendId))
+        return; // request already in flight
+    m_pendingDetection.insert(backendId);
+    m_detectionSignatures.insert(backendId, detectionSignature(config));
+    auto *detector = createBackend(config).release();
+    detector->setParent(this);
+    const QString url = config.effectiveBaseUrl();
+    if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
+        qWarning().noquote() << "[okapi models] detectModels() sending listModels() for"
+                             << config.name << backendId << "to" << url;
+    connect(detector, &IBackend::modelsReady, this,
+            [this, backendId, detector](const QStringList &models) {
+                if (m_detectors.contains(backendId) && m_detectors.value(backendId) == detector)
+                    onModelsDetected(backendId, models);
+            });
+    connect(detector, &IBackend::modelsFailed, this,
+            [this, backendId, detector](const QString &error) {
+                if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
+                    qWarning().noquote()
+                        << "[okapi models] detection FAILED for" << backendId << ":" << error;
+                if (m_detectors.contains(backendId) && *m_detectors.find(backendId) == detector) {
+                    m_pendingDetection.remove(backendId); // allow retry on next trigger
+                    m_detectors.remove(backendId);
+                    detector->deleteLater();
+                }
+            });
+    m_detectors.insert(backendId, detector);
+    detector->listModels();
+}
+
 void MainWindow::detectModels() {
     // Query every enabled backend, not just the selected one: the picker
     // shows a submenu per provider, and a provider the user never selected
@@ -1875,39 +1921,8 @@ void MainWindow::detectModels() {
     for (const auto &config : m_registry.backends()) {
         if (!config.enabled)
             continue;
-        const QString backendId = config.id.toString();
         invalidatedStale = dropStaleDetectionIfReconfigured(config) || invalidatedStale;
-        if (!m_detectedModels.value(backendId).isEmpty())
-            continue; // already detected successfully for this backend
-        if (m_pendingDetection.contains(backendId))
-            continue; // request already in flight
-        m_pendingDetection.insert(backendId);
-        m_detectionSignatures.insert(backendId, detectionSignature(config));
-        auto *detector = createBackend(config).release();
-        detector->setParent(this);
-        const QString url = config.effectiveBaseUrl();
-        if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
-            qWarning().noquote() << "[okapi models] detectModels() sending listModels() for"
-                                 << config.name << backendId << "to" << url;
-        connect(detector, &IBackend::modelsReady, this,
-                [this, backendId, detector](const QStringList &models) {
-                    if (m_detectors.contains(backendId) && m_detectors.value(backendId) == detector)
-                        onModelsDetected(backendId, models);
-                });
-        connect(detector, &IBackend::modelsFailed, this,
-                [this, backendId, detector](const QString &error) {
-                    if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
-                        qWarning().noquote()
-                            << "[okapi models] detection FAILED for" << backendId << ":" << error;
-                    if (m_detectors.contains(backendId) &&
-                        *m_detectors.find(backendId) == detector) {
-                        m_pendingDetection.remove(backendId); // allow retry on next trigger
-                        m_detectors.remove(backendId);
-                        detector->deleteLater();
-                    }
-                });
-        m_detectors.insert(backendId, detector);
-        detector->listModels();
+        startModelDetectionFor(config);
     }
     // Stale lists were dropped above: rebuild the picker right away so it no
     // longer shows the old backend's models while re-detection is running (or

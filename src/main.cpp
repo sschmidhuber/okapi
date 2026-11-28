@@ -104,6 +104,13 @@ void applyDesktopStyle(QApplication &app) {
 
 int main(int argc, char *argv[]) {
     okapi::startupProfile::start();
+    // Qt WebEngine spawns a GPU process during startup; the chat UI renders
+    // fine in software and skipping the GPU process shortens first render.
+    // Only set when the user has not provided their own Chromium flags.
+#ifdef Q_OS_LINUX
+    if (qEnvironmentVariableIsEmpty("QTWEBENGINE_CHROMIUM_FLAGS"))
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu");
+#endif
     QApplication app(argc, argv);
     okapi::startupProfile::mark(QStringLiteral("QApplication created"));
     QApplication::setApplicationName(QStringLiteral("okapi"));
