@@ -103,7 +103,7 @@ QString linkifiedErrorText(const QString &error) {
 QSettings openConfigSettings() {
     const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     QDir().mkpath(configDir);
-    return QSettings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+    return QSettings{configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat};
 }
 
 } // namespace
