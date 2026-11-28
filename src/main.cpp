@@ -4,6 +4,7 @@
 #include "core/backendregistry.h"
 #include "core/mcpregistry.h"
 #include "core/mcpserverconfig.h"
+#include "core/startupprofile.h"
 #include "storage/chatdatabase.h"
 
 #include <QApplication>
@@ -11,6 +12,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStyleFactory>
+#include <QTimer>
 #include <QUrl>
 
 namespace {
@@ -101,7 +103,16 @@ void applyDesktopStyle(QApplication &app) {
 } // namespace
 
 int main(int argc, char *argv[]) {
+    okapi::startupProfile::start();
+    // Qt WebEngine spawns a GPU process during startup; the chat UI renders
+    // fine in software and skipping the GPU process shortens first render.
+    // Only set when the user has not provided their own Chromium flags.
+#ifdef Q_OS_LINUX
+    if (qEnvironmentVariableIsEmpty("QTWEBENGINE_CHROMIUM_FLAGS"))
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu");
+#endif
     QApplication app(argc, argv);
+    okapi::startupProfile::mark(QStringLiteral("QApplication created"));
     QApplication::setApplicationName(QStringLiteral("okapi"));
     QApplication::setOrganizationName(QStringLiteral("sschmidhuber"));
     // The display name is what Qt appends to the window title when the title
@@ -113,12 +124,17 @@ int main(int argc, char *argv[]) {
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/resources/icons/okapi.png")));
 
     applyDesktopStyle(app);
+    okapi::startupProfile::mark(QStringLiteral("style applied"));
 
     if (qEnvironmentVariableIsSet("OKAPI_E2E_MOCK_BACKEND"))
         seedE2eMockBackend();
 
     okapi::MainWindow window;
+    okapi::startupProfile::mark(QStringLiteral("MainWindow constructed"));
     window.show();
+    okapi::startupProfile::mark(QStringLiteral("window shown"));
+    QTimer::singleShot(
+        0, [] { okapi::startupProfile::mark(QStringLiteral("first idle after show")); });
 
     return QApplication::exec();
 }

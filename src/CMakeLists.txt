@@ -36,6 +36,7 @@ endif()
 
 set(OKAPI_CORE_SOURCES
     core/message.h
+    core/startupprofile.h
     core/imagemessage.h
     core/imagemessage.cpp
     core/attachmentopener.h

@@ -165,6 +165,7 @@ public:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 private slots:
     void onNewChat();
@@ -243,6 +244,10 @@ private slots:
 
 private:
     void setupUi();
+    // Creates the chat web view on first show (not in setupUi()): constructing
+    // a QWebEngineView initializes Qt WebEngine and loads the chat page, which
+    // would otherwise delay the first paint; created after show instead.
+    void ensureChatView();
     // Applies and persists the sidebar visibility (ui/sidebarVisible in
     // okapi.conf) and keeps the toolbar button's checked state in sync.
     void setSidebarVisible(bool visible);
@@ -256,6 +261,12 @@ private:
     // Re-creates the window shortcuts and the composer's dictate shortcut
     // from the current registry state and refreshes the tooltips.
     void reapplyShortcuts();
+    // UiSettings::changed handler: throughput flag and theme for the lazily
+    // created chat view, then the icon re-theming.
+    void onUiSettingsChanged();
+    // Pushes the current dark mode to the chat view (if it exists yet) and
+    // re-themes the toolbar/composer icons.
+    void reapplyThemeAndIcons();
     // Chat-view signals: older-messages paging, link open/hover, file open.
     void setupChatViewConnections();
     // Wires the composer splitter (drag to resize, persist) and the
@@ -308,18 +319,20 @@ private:
     void updateEmptyState();
     [[nodiscard]] bool openDatabase();
     void loadBackendsFromDatabase();
-    void loadSttSettingsFromDatabase();
-    void loadSystemPrompt();
-    void loadLastModels();
-    void loadShortcuts();
-    void loadUiSettings();
-    void loadPromptTemplates();
+    // The config loaders share one QSettings instance (constructing one
+    // re-reads and re-parses okapi.conf from disk on every call).
+    void loadSttSettingsFromDatabase(QSettings &settings);
+    void loadSystemPrompt(QSettings &settings);
+    void loadLastModels(QSettings &settings);
+    void loadShortcuts(QSettings &settings);
+    void loadUiSettings(QSettings &settings);
+    void loadPromptTemplates(QSettings &settings);
     // Moves the prompt-template popup to the composer's caret anchor
     // (below the trigger line, flipped above the composer near the screen
     // bottom).
     void positionPromptMenu();
     void configureVoiceInput();
-    void loadTtsSettingsFromDatabase();
+    void loadTtsSettingsFromDatabase(QSettings &settings);
     void configureTts();
     void loadMcpServersFromDatabase();
     void loadOlderMessages(ChatSession *session);
@@ -357,6 +370,9 @@ private:
     // and schedules the context (with its backend) for deletion.
     void finalizeContext(StreamContext *context, const QString &statusMessage);
     void detectModels();
+    // Starts the model-detection request for one backend (skipped while
+    // startup work is deferred, or when already detected/in flight).
+    void startModelDetectionFor(const BackendConfig &config);
     // Runs the MCP tool-call loop for the chat: executes the requested
     // tools and re-sends the conversation until the model answers with text.
     void runToolCalls(StreamContext *context, const QUuid &assistantMessageId,
@@ -507,6 +523,11 @@ private:
     QTimer *m_draftSaveTimer = nullptr;
     // Guards loadDraftIntoComposer() against the textChanged signal it causes.
     bool m_loadingDraft = false;
+    // While true (during the constructor), MCP reconnects and model detection
+    // are deferred until after the window is shown.
+    bool m_startupPending = true;
+    // Set once the lazy chat view creation has been scheduled from paintEvent.
+    bool m_chatViewScheduled = false;
 };
 
 } // namespace okapi

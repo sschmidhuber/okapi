@@ -5,6 +5,7 @@
 #include "core/attachmentopener.h"
 #include "core/audiorecorder.h"
 #include "core/chatsession.h"
+#include "core/startupprofile.h"
 #include "core/tooldebug.h"
 #include "core/ttsplayer.h"
 #include "storage/chatdatabase.h"
@@ -94,6 +95,15 @@ QString linkifiedErrorText(const QString &error) {
     QString escaped = error.toHtmlEscaped();
     escaped.replace(urlPattern, QStringLiteral(R"(<a href="%1">%1</a>)"));
     return escaped;
+}
+
+// The shared okapi.conf: constructing a QSettings re-reads and re-parses the
+// file, so the startup config loaders share one instance instead of each
+// opening their own.
+QSettings openConfigSettings() {
+    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(configDir);
+    return QSettings{configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat};
 }
 
 } // namespace
@@ -271,45 +281,53 @@ struct StreamContext {
 };
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_mcpRegistry) {
+    startupProfile::mark(QStringLiteral("ctor begin"));
     setWindowTitle(tr("Okapi"));
     resize(1100, 720);
+    // The chat web view (QWebEngineView) is created lazily after the first
+    // paint. A WebEngine widget needs a native window handle; adding it to an
+    // already-shown non-native window would recreate the top-level window
+    // (visible close+reopen). Make the main window native up front instead.
+    setAttribute(Qt::WA_NativeWindow);
 
     if (!openDatabase())
         setStatusBase(tr("Warning: chat storage unavailable, chats will not be "
                          "persisted."));
+    startupProfile::mark(QStringLiteral("database opened"));
     loadBackendsFromDatabase();
     loadMcpServersFromDatabase();
-    loadSttSettingsFromDatabase();
-    loadSystemPrompt();
-    loadLastModels();
-    loadShortcuts();
-    loadUiSettings();
+    QSettings settings = openConfigSettings();
+    loadSttSettingsFromDatabase(settings);
+    loadSystemPrompt(settings);
+    loadLastModels(settings);
+    loadShortcuts(settings);
+    loadUiSettings(settings);
     // Apply the theme before setupUi() creates any widgets, so icons created
     // in constructors (themedIcon) already use the correct palette.
     m_darkMode = applyTheme(m_uiSettings.theme());
-    loadPromptTemplates();
+    loadPromptTemplates(settings);
+    startupProfile::mark(QStringLiteral("config loaded"));
 
     setupUi();
+    startupProfile::mark(QStringLiteral("setupUi done"));
     setupConnections();
 
     // Voice input setup needs the composer, which setupUi() creates.
     configureVoiceInput();
 
     // TTS setup needs m_speakButton, which setupUi() creates.
-    loadTtsSettingsFromDatabase();
+    loadTtsSettingsFromDatabase(settings);
     configureTts();
 
-    m_mcpManager.reload();
-    onMcpToolsChanged();
-
     onBackendChanged();
-    refreshSidebar();
+    startupProfile::mark(QStringLiteral("backend changed"));
 
     // Always start on a fresh chat: reopening the last chat would read its
     // full content (images, thumbnails) before the window is shown. Recent
     // chats are prefetched in the background, older ones load on demand when
     // selected.
     createSession();
+    startupProfile::mark(QStringLiteral("session created"));
     // Drains background prefetch results on the UI thread; the workers only
     // append to the shared queue, so they never touch this window.
     m_prefetchDrainTimer = new QTimer(this);
@@ -317,25 +335,75 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     connect(m_prefetchDrainTimer, &QTimer::timeout, this, [this]() { drainPrefetchResults(); });
     m_prefetchDrainTimer->start();
     QTimer::singleShot(kPrefetchDelayMs, this, [this]() { prefetchRecentSessions(); });
-    // Warm the audio backend once after startup: the first QMediaDevices
-    // query initializes PulseAudio/PipeWire and can block noticeably, which
-    // otherwise surfaces as a delay when the settings dialog's STT/TTS pages
-    // enumerate audio devices for the first time.
-    QTimer::singleShot(0, this, [] {
-        // Results are intentionally unused; the calls only warm the backend.
-        static_cast<void>(AudioRecorder::availableInputDevices());
-        static_cast<void>(TtsPlayer::availableOutputDevices());
+    // Work that is not needed for the first paint is deferred until after the
+    // window is shown: connecting to MCP servers (may spawn processes) and
+    // detecting models (network requests to every enabled backend) would
+    // otherwise compete with the first frame.
+    QTimer::singleShot(0, this, [this]() {
+        m_startupPending = false;
+        m_mcpManager.reload();
+        onMcpToolsChanged();
+        detectModels();
+        startupProfile::mark(QStringLiteral("deferred startup work done"));
     });
+    // Warm the audio backend once after startup, off the UI thread: the first
+    // QMediaDevices query initializes PulseAudio/PipeWire and can block
+    // noticeably on the GUI thread. Results are intentionally unused; the
+    // calls only warm the backend for the settings dialog's STT/TTS pages.
+    QTimer::singleShot(0, this, [] {
+        QThreadPool::globalInstance()->start([] {
+            static_cast<void>(AudioRecorder::availableInputDevices());
+            static_cast<void>(TtsPlayer::availableOutputDevices());
+        });
+    });
+    startupProfile::mark(QStringLiteral("ctor end"));
+}
+
+void MainWindow::ensureChatView() {
+    if (m_chatView)
+        return;
+    // The chat web view is created only once the window is shown: the
+    // QWebEngineView constructor initializes Qt WebEngine (spawns the
+    // Chromium processes) and loads the chat page, which would otherwise
+    // happen before the first paint and delay startup.
+    m_chatView = new WebChatView(m_ui->chatViewHost);
+    m_ui->chatMarginLayout->insertWidget(0, m_chatView);
+    m_chatView->setShowThroughput(m_uiSettings.showThroughput());
+    m_chatView->setDarkMode(m_darkMode);
+    connect(m_chatView, &WebChatView::messageEditRequested, this, &MainWindow::startEditMessage);
+    setupChatViewConnections();
+    m_chatView->setSession(m_currentSession);
+    m_chatView->setVisible(!m_emptyLabel->isVisible());
+    startupProfile::mark(QStringLiteral("WebChatView ensured (after show)"));
 }
 
 void MainWindow::showEvent(QShowEvent *event) {
+    startupProfile::mark(QStringLiteral("showEvent"));
     QMainWindow::showEvent(event);
+    // Fallback in case no paint event is delivered promptly (some platforms
+    // paint lazily): the chat view must exist shortly after show regardless.
+    if (!m_chatViewScheduled) {
+        m_chatViewScheduled = true;
+        QTimer::singleShot(250, this, [this]() { ensureChatView(); });
+    }
     // The chat composer is where a conversation starts: focus it on every
     // show of the main window (first launch and re-show alike) so the user
     // can start typing immediately.
     if (m_composer)
         m_composer->focusInput();
     applyComposerHeight();
+}
+
+void MainWindow::paintEvent(QPaintEvent *event) {
+    QMainWindow::paintEvent(event);
+    // Create the chat web view only after the first frame has been painted:
+    // the QWebEngineView constructor spawns the Chromium processes, which
+    // would otherwise delay the first presented frame. The singleShot(0)
+    // fires after the current paint pass (and its backing-store flush).
+    if (!m_chatViewScheduled) {
+        m_chatViewScheduled = true;
+        QTimer::singleShot(0, this, [this]() { ensureChatView(); });
+    }
 }
 
 void MainWindow::setupUi() {
@@ -351,7 +419,6 @@ void MainWindow::setupUi() {
     m_promptTemplateButton = m_ui->promptTemplateButton;
     m_settingsButton = m_ui->settingsButton;
     m_sidebar = m_ui->sidebar;
-    m_chatView = m_ui->chatView;
     m_emptyLabel = m_ui->emptyLabel;
     m_composer = m_ui->composer;
     m_composerColumn = m_ui->composerColumn;
@@ -509,36 +576,12 @@ void MainWindow::setupConnections() {
             closePromptMenu();
     });
     connect(&m_shortcuts, &ShortcutRegistry::changed, this, &MainWindow::reapplyShortcuts);
-    m_chatView->setShowThroughput(m_uiSettings.showThroughput());
-    connect(&m_uiSettings, &UiSettings::changed, this,
-            [this]() { m_chatView->setShowThroughput(m_uiSettings.showThroughput()); });
-    // Theme: applied immediately; in Auto mode also follow live OS changes.
-    m_chatView->setDarkMode(m_darkMode);
-    connect(&m_uiSettings, &UiSettings::changed, this, [this]() {
-        m_darkMode = applyTheme(m_uiSettings.theme());
-        m_chatView->setDarkMode(m_darkMode);
-        // Re-theme the toolbar and composer icons (recolored on load).
-        m_newChatButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-        m_toggleSidebarButton->setIcon(sidebarToggleIcon());
-        m_promptTemplateButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
-        m_settingsButton->setIcon(
-            themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
-        m_composer->refreshTheme();
-    });
+    connect(&m_uiSettings, &UiSettings::changed, this, &MainWindow::onUiSettingsChanged);
+    // In Auto mode also follow live OS color-scheme changes.
     connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this](Qt::ColorScheme) {
         if (m_uiSettings.theme() == UiSettings::Theme::Auto) {
             m_darkMode = applyTheme(UiSettings::Theme::Auto);
-            m_chatView->setDarkMode(m_darkMode);
-            m_newChatButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
-            m_toggleSidebarButton->setIcon(sidebarToggleIcon());
-            m_promptTemplateButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
-            m_settingsButton->setIcon(
-                themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
-            m_composer->refreshTheme();
+            reapplyThemeAndIcons();
         }
     });
     connect(m_settingsButton, &QAction::triggered, this, [this] { openSettings(QString()); });
@@ -616,7 +659,6 @@ void MainWindow::setupConnections() {
         showTransientStatus(tr("Text-to-speech failed: %1").arg(message), 10000);
     });
     connect(m_speakButton, &QPushButton::clicked, this, &MainWindow::onSpeakResponsesToggled);
-    setupChatViewConnections();
     connect(m_sendButton, &QPushButton::clicked, this, [this]() {
         if (m_composer->isEmpty())
             return;
@@ -624,7 +666,6 @@ void MainWindow::setupConnections() {
     });
     connect(m_stopButton, &QPushButton::clicked, this, &MainWindow::onStop);
     connect(m_cancelEditButton, &QPushButton::clicked, this, &MainWindow::cancelEditMessage);
-    connect(m_chatView, &WebChatView::messageEditRequested, this, &MainWindow::startEditMessage);
     connect(m_modelPicker, &ModelPickerButton::backendSelected, this, [this](const QString &id) {
         if (m_currentSession && !id.isEmpty()) {
             m_currentSession->setBackendId(id);
@@ -670,6 +711,27 @@ void MainWindow::setupConnections() {
             [this](const QString &toolName, const QString &error) {
                 showTransientStatus(tr("MCP tool \"%1\" failed: %2").arg(toolName, error), 10000);
             });
+}
+
+void MainWindow::onUiSettingsChanged() {
+    if (m_chatView)
+        m_chatView->setShowThroughput(m_uiSettings.showThroughput());
+    m_darkMode = applyTheme(m_uiSettings.theme());
+    reapplyThemeAndIcons();
+}
+
+void MainWindow::reapplyThemeAndIcons() {
+    if (m_chatView)
+        m_chatView->setDarkMode(m_darkMode);
+    // Re-theme the toolbar and composer icons (recolored on load).
+    m_newChatButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/contact-new-symbolic.svg")));
+    m_toggleSidebarButton->setIcon(sidebarToggleIcon());
+    m_promptTemplateButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/kmouth-phrase-new-symbolic.svg")));
+    m_settingsButton->setIcon(
+        themedIcon(QStringLiteral(":/resources/icons/settings-configure-symbolic.svg")));
+    m_composer->refreshTheme();
 }
 
 MainWindow::~MainWindow() {
@@ -758,7 +820,8 @@ void MainWindow::onSessionSelected(const QUuid &id) {
     // already prefetched in the background by then).
     if (m_currentSession)
         loadInitialMessages(m_currentSession);
-    m_chatView->setSession(m_currentSession);
+    if (m_chatView)
+        m_chatView->setSession(m_currentSession);
     m_sidebar->selectSession(id);
     // The composer now shows the newly selected chat's unsent draft.
     loadDraftIntoComposer();
@@ -843,7 +906,8 @@ void MainWindow::softDeleteSession(const QUuid &id) {
     m_unreadSessions.remove(id);
     if (session == m_currentSession) {
         m_currentSession = nullptr;
-        m_chatView->setSession(nullptr);
+        if (m_chatView)
+            m_chatView->setSession(nullptr);
     }
     refreshSidebar();
     if (!m_currentSession)
@@ -1071,7 +1135,8 @@ void MainWindow::deleteSession(const QUuid &id) {
             cancelContext(*it);
             if (*it == m_currentSession) {
                 m_currentSession = nullptr;
-                m_chatView->setSession(nullptr);
+                if (m_chatView)
+                    m_chatView->setSession(nullptr);
             }
             if (m_database.isOpen())
                 m_database.deleteSession((*it)->id().toString(QUuid::WithoutBraces));
@@ -1235,38 +1300,23 @@ void MainWindow::loadMcpServersFromDatabase() {
         m_mcpRegistry.load(m_database);
 }
 
-void MainWindow::loadSystemPrompt() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadSystemPrompt(QSettings &settings) {
     m_systemPrompt.load(settings);
 }
 
-void MainWindow::loadSttSettingsFromDatabase() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadSttSettingsFromDatabase(QSettings &settings) {
     m_sttRegistry.loadSettings(settings);
 }
 
-void MainWindow::loadTtsSettingsFromDatabase() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadTtsSettingsFromDatabase(QSettings &settings) {
     m_ttsRegistry.loadSettings(settings);
 }
 
-void MainWindow::loadShortcuts() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadShortcuts(QSettings &settings) {
     m_shortcuts.load(settings);
 }
 
-void MainWindow::loadPromptTemplates() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadPromptTemplates(QSettings &settings) {
     m_promptTemplates.load(settings);
 }
 
@@ -1393,17 +1443,11 @@ void MainWindow::closePromptMenu() {
         m_promptMenu->hide();
 }
 
-void MainWindow::loadUiSettings() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadUiSettings(QSettings &settings) {
     m_uiSettings.load(settings);
 }
 
-void MainWindow::loadLastModels() {
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+void MainWindow::loadLastModels(QSettings &settings) {
     const auto keys = settings.allKeys();
     for (const QString &key : keys) {
         constexpr auto prefix = "models/last/";
@@ -1543,7 +1587,8 @@ void MainWindow::loadOlderMessages(ChatSession *session) {
     }
     if (!older.isEmpty()) {
         session->prependMessages(older);
-        m_chatView->prependMessages(older);
+        if (m_chatView)
+            m_chatView->prependMessages(older);
         // Track how many DB rows sit above the live tail: previously paged-in
         // history plus the live messages themselves.
         session->setProperty("okapi_loadedCount", session->property("okapi_loadedCount").toInt() +
@@ -1626,7 +1671,7 @@ void MainWindow::applyPrefetchedMessages(const QString &sessionId,
             appendStoredMessage(session, stored);
         session->setProperty("okapi_loadedCount", loadedCount);
         session->setProperty("okapi_messagesLoaded", true);
-        if (session == m_currentSession)
+        if (session == m_currentSession && m_chatView)
             m_chatView->setSession(m_currentSession);
         return;
     }
@@ -1720,18 +1765,14 @@ void MainWindow::saveLastModelForBackend(const QString &backendId, const QString
     if (m_lastModels.value(backendId) == model.trimmed())
         return;
     m_lastModels.insert(backendId, model.trimmed());
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+    QSettings settings = openConfigSettings();
     settings.setValue(QStringLiteral("models/last/%1").arg(backendId), model.trimmed());
 }
 
 void MainWindow::forgetLastModelForBackend(const QString &backendId) {
     if (!m_lastModels.remove(backendId))
         return;
-    const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    QDir().mkpath(configDir);
-    QSettings settings(configDir + QStringLiteral("/okapi.conf"), QSettings::IniFormat);
+    QSettings settings = openConfigSettings();
     settings.remove(QStringLiteral("models/last/%1").arg(backendId));
 }
 
@@ -1838,6 +1879,45 @@ bool MainWindow::dropStaleDetectionIfReconfigured(const BackendConfig &config) {
     return true;
 }
 
+// Starts the listModels() request for one backend, unless one is already in
+// flight or the models are known. During startup the network request is
+// deferred until after the window is shown (see the constructor).
+void MainWindow::startModelDetectionFor(const BackendConfig &config) {
+    if (m_startupPending)
+        return;
+    const QString backendId = config.id.toString();
+    if (!m_detectedModels.value(backendId).isEmpty())
+        return; // already detected successfully for this backend
+    if (m_pendingDetection.contains(backendId))
+        return; // request already in flight
+    m_pendingDetection.insert(backendId);
+    m_detectionSignatures.insert(backendId, detectionSignature(config));
+    auto *detector = createBackend(config).release();
+    detector->setParent(this);
+    const QString url = config.effectiveBaseUrl();
+    if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
+        qWarning().noquote() << "[okapi models] detectModels() sending listModels() for"
+                             << config.name << backendId << "to" << url;
+    connect(detector, &IBackend::modelsReady, this,
+            [this, backendId, detector](const QStringList &models) {
+                if (m_detectors.contains(backendId) && m_detectors.value(backendId) == detector)
+                    onModelsDetected(backendId, models);
+            });
+    connect(detector, &IBackend::modelsFailed, this,
+            [this, backendId, detector](const QString &error) {
+                if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
+                    qWarning().noquote()
+                        << "[okapi models] detection FAILED for" << backendId << ":" << error;
+                if (m_detectors.contains(backendId) && *m_detectors.find(backendId) == detector) {
+                    m_pendingDetection.remove(backendId); // allow retry on next trigger
+                    m_detectors.remove(backendId);
+                    detector->deleteLater();
+                }
+            });
+    m_detectors.insert(backendId, detector);
+    detector->listModels();
+}
+
 void MainWindow::detectModels() {
     // Query every enabled backend, not just the selected one: the picker
     // shows a submenu per provider, and a provider the user never selected
@@ -1846,39 +1926,8 @@ void MainWindow::detectModels() {
     for (const auto &config : m_registry.backends()) {
         if (!config.enabled)
             continue;
-        const QString backendId = config.id.toString();
         invalidatedStale = dropStaleDetectionIfReconfigured(config) || invalidatedStale;
-        if (!m_detectedModels.value(backendId).isEmpty())
-            continue; // already detected successfully for this backend
-        if (m_pendingDetection.contains(backendId))
-            continue; // request already in flight
-        m_pendingDetection.insert(backendId);
-        m_detectionSignatures.insert(backendId, detectionSignature(config));
-        auto *detector = createBackend(config).release();
-        detector->setParent(this);
-        const QString url = config.effectiveBaseUrl();
-        if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
-            qWarning().noquote() << "[okapi models] detectModels() sending listModels() for"
-                                 << config.name << backendId << "to" << url;
-        connect(detector, &IBackend::modelsReady, this,
-                [this, backendId, detector](const QStringList &models) {
-                    if (m_detectors.contains(backendId) && m_detectors.value(backendId) == detector)
-                        onModelsDetected(backendId, models);
-                });
-        connect(detector, &IBackend::modelsFailed, this,
-                [this, backendId, detector](const QString &error) {
-                    if (qEnvironmentVariableIsSet("OKAPI_DEBUG_MODELS"))
-                        qWarning().noquote()
-                            << "[okapi models] detection FAILED for" << backendId << ":" << error;
-                    if (m_detectors.contains(backendId) &&
-                        *m_detectors.find(backendId) == detector) {
-                        m_pendingDetection.remove(backendId); // allow retry on next trigger
-                        m_detectors.remove(backendId);
-                        detector->deleteLater();
-                    }
-                });
-        m_detectors.insert(backendId, detector);
-        detector->listModels();
+        startModelDetectionFor(config);
     }
     // Stale lists were dropped above: rebuild the picker right away so it no
     // longer shows the old backend's models while re-detection is running (or
@@ -2682,7 +2731,8 @@ void MainWindow::updateEmptyState() {
     const bool noBackends = m_registry.backends().isEmpty();
     const bool noSession = m_currentSession == nullptr;
     m_emptyLabel->setVisible(noBackends || noSession);
-    m_chatView->setVisible(!m_emptyLabel->isVisible());
+    if (m_chatView)
+        m_chatView->setVisible(!m_emptyLabel->isVisible());
     if (noBackends)
         m_emptyLabel->setText(tr("No backends configured yet.\n\n"
                                  "Open \"Settings… → Model backends\" to add Ollama, llama.cpp,\n"
