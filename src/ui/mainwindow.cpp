@@ -451,6 +451,14 @@ void MainWindow::setupUi() {
 
     m_ui->mainSplitter->setStretchFactor(1, 1);
     m_composerColumn->setMinimumHeight(UiSettings::kMinComposerHeight);
+    // The chat web view is created lazily after the first paint, but a
+    // QWebEngineView needs a native window handle: when it is added later, Qt
+    // makes its ancestors native at that moment, which unmaps/remaps the
+    // top-level window (visible as the window closing and reopening). Make
+    // the view's container native up front so the chain is already native
+    // when the view is inserted (the main window itself is made native in
+    // the constructor).
+    m_ui->chatViewHost->setAttribute(Qt::WA_NativeWindow);
 
     // The mic/attach buttons and the status bar labels are declared in
     // mainwindow.ui; the composer adopts the buttons and wires its signals.
