@@ -284,6 +284,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_mcpManager(&m_m
     startupProfile::mark(QStringLiteral("ctor begin"));
     setWindowTitle(tr("Okapi"));
     resize(1100, 720);
+    // The chat web view (QWebEngineView) is created lazily after the first
+    // paint. A WebEngine widget needs a native window handle; adding it to an
+    // already-shown non-native window would recreate the top-level window
+    // (visible close+reopen). Make the main window native up front instead.
+    setAttribute(Qt::WA_NativeWindow);
 
     if (!openDatabase())
         setStatusBase(tr("Warning: chat storage unavailable, chats will not be "
